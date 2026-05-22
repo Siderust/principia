@@ -449,9 +449,9 @@ mod tests {
         let m = p.to_row_major();
         let p2 = StateCovariance::<Inertial>::from_row_major(m);
         let m2 = p2.to_row_major();
-        for i in 0..6 {
-            for j in 0..6 {
-                assert!((m[i][j] - m2[i][j]).abs() < 1e-30);
+        for (i, row) in m.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
+                assert!((*value - m2[i][j]).abs() < 1e-30);
             }
         }
     }
@@ -462,12 +462,12 @@ mod tests {
             [Kilometers::new(1.0); 3],
             [Quantity::<KmPerSecond>::new(1e-3); 3],
         );
-        let p2 = StateCovariance::from_block_components(p.rr().clone(), *p.rv(), p.vv().clone());
+        let p2 = StateCovariance::from_block_components(*p.rr(), *p.rv(), *p.vv());
         let m1 = p.to_row_major();
         let m2 = p2.to_row_major();
-        for i in 0..6 {
-            for j in 0..6 {
-                assert!((m1[i][j] - m2[i][j]).abs() < 1e-30);
+        for (i, row) in m1.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
+                assert!((*value - m2[i][j]).abs() < 1e-30);
             }
         }
     }
@@ -575,8 +575,8 @@ mod tests {
     fn cholesky_negative_definite_returns_not_psd() {
         // Build a matrix with a negative diagonal entry
         let mut m = [[0.0_f64; 6]; 6];
-        for i in 0..6 {
-            m[i][i] = if i == 2 { -1.0 } else { 1.0 };
+        for (i, row) in m.iter_mut().enumerate() {
+            row[i] = if i == 2 { -1.0 } else { 1.0 };
         }
         let p = StateCovariance::<Inertial>::from_row_major(m);
         assert!(!p.is_positive_semidefinite(qtty::RelativeTolerance::new(1e-10)));

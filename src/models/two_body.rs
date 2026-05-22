@@ -215,10 +215,10 @@ mod tests {
     fn partials_symmetry() {
         let p = model().partials(&make_state(7000.0), &()).unwrap();
         let m = p.d_acc_d_pos.as_array();
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in m.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
                 assert!(
-                    (m[i][j] - m[j][i]).abs() < 1e-20,
+                    (*value - m[j][i]).abs() < 1e-20,
                     "not symmetric at ({i},{j})"
                 );
             }
