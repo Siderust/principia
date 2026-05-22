@@ -414,4 +414,153 @@ mod tests {
         let m = frame.dcm.as_array();
         assert!((m[2][0] + 1.0).abs() < 1e-12);
     }
+
+    #[test]
+    fn rtn_from_state_free_function_matches_try_from_state() {
+        let s = circular_state();
+        let r = [
+            s.position.x().value(),
+            s.position.y().value(),
+            s.position.z().value(),
+        ];
+        let v = [
+            s.velocity.x().value(),
+            s.velocity.y().value(),
+            s.velocity.z().value(),
+        ];
+        let f1 = LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&s).unwrap();
+        let f2 = rtn_from_state::<Inertial>(r, v).unwrap();
+        let m1 = f1.dcm.as_array();
+        let m2 = f2.dcm.as_array();
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn vnc_from_state_free_function_succeeds() {
+        let s = circular_state();
+        let r = [
+            s.position.x().value(),
+            s.position.y().value(),
+            s.position.z().value(),
+        ];
+        let v = [
+            s.velocity.x().value(),
+            s.velocity.y().value(),
+            s.velocity.z().value(),
+        ];
+        let frame = vnc_from_state::<Inertial>(r, v).unwrap();
+        let m = frame.dcm.as_array();
+        // First row should be velocity direction (y-axis for our state)
+        assert!(m[0][0].abs() < 1e-12);
+        assert!((m[0][1] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn lvlh_from_state_free_function_succeeds() {
+        let s = circular_state();
+        let r = [
+            s.position.x().value(),
+            s.position.y().value(),
+            s.position.z().value(),
+        ];
+        let v = [
+            s.velocity.x().value(),
+            s.velocity.y().value(),
+            s.velocity.z().value(),
+        ];
+        let frame = lvlh_from_state::<Inertial>(r, v).unwrap();
+        let m = frame.dcm.as_array();
+        // z row should be -radial = [-1,0,0]
+        assert!((m[2][0] + 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rtn_from_state_zero_position_error() {
+        let result = rtn_from_state::<Inertial>([0.0, 0.0, 0.0], [0.0, 7.5, 0.0]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rtn_from_state_parallel_pos_vel_error() {
+        // Parallel r and v => no angular momentum
+        let result = rtn_from_state::<Inertial>([7000.0, 0.0, 0.0], [7.5, 0.0, 0.0]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn vnc_from_state_zero_velocity_error() {
+        let result = vnc_from_state::<Inertial>([7000.0, 0.0, 0.0], [0.0, 0.0, 0.0]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_from_state_rtn_degenerate_returns_error() {
+        let s = DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&s).is_err());
+    }
+
+    #[test]
+    fn try_from_state_vnc_degenerate_returns_error() {
+        let s = DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 0.0, 0.0),
+        );
+        assert!(LocalTrajectoryFrame::<Inertial, VNC>::try_from_state(&s).is_err());
+    }
+
+    #[test]
+    fn try_from_state_lvlh_degenerate_returns_error() {
+        let s = DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(LocalTrajectoryFrame::<Inertial, LVLH>::try_from_state(&s).is_err());
+    }
+
+    #[test]
+    fn dcm_accessor_returns_dcm() {
+        let frame =
+            LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&circular_state()).unwrap();
+        let dcm = frame.dcm();
+        let m = dcm.as_array();
+        assert!((m[0][0] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rotation_and_inverse_are_transposes() {
+        let frame =
+            LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&circular_state()).unwrap();
+        let r = frame.rotation();
+        let ri = frame.rotation_inverse();
+        // r applied then ri applied should give back the original vector
+        let v = [1.0, 2.0, 3.0];
+        let rv = r.apply_array(v);
+        let back = ri.apply_array(rv);
+        assert!((back[0] - v[0]).abs() < 1e-12);
+        assert!((back[1] - v[1]).abs() < 1e-12);
+        assert!((back[2] - v[2]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn to_local_and_to_inertial_roundtrip() {
+        use affn::cartesian::Displacement;
+        let frame =
+            LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&circular_state()).unwrap();
+        let v = Displacement::<Inertial, Kilometer>::new(1.0, 0.0, 0.0);
+        let local = frame.to_local(v);
+        let back = frame.to_inertial(local);
+        assert!((back.x().value() - 1.0).abs() < 1e-12);
+        assert!(back.y().value().abs() < 1e-12);
+        assert!(back.z().value().abs() < 1e-12);
+    }
 }

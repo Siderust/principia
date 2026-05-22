@@ -158,3 +158,78 @@ where
     }
     Ok(states)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::TwoBody;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::unit::Kilometer;
+    use qtty::{GravitationalParameter, KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn circular_state() -> DynamicsState<TT, Center, Inertial> {
+        let mu = 398_600.441_8_f64;
+        let r = 7000.0_f64;
+        let v = (mu / r).sqrt();
+        DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(r, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, v, 0.0),
+        )
+    }
+
+    fn model() -> TwoBody {
+        TwoBody::new(GravitationalParameter::new(398_600.441_8))
+    }
+
+    #[test]
+    fn rk4_propagate_conserves_radius() {
+        let s0 = circular_state();
+        let r0 = s0.position.x().value();
+        let mu = 398_600.441_8_f64;
+        let period = 2.0 * core::f64::consts::PI * (r0.powi(3) / mu).sqrt();
+        let s = rk4_propagate(&model(), s0, Second::new(60.0), Second::new(period), &()).unwrap();
+        let r = (s.position.x().value().powi(2)
+            + s.position.y().value().powi(2)
+            + s.position.z().value().powi(2))
+        .sqrt();
+        assert!(
+            (r - r0).abs() < 1.0,
+            "radius drifted by {} km",
+            (r - r0).abs()
+        );
+    }
+
+    #[test]
+    fn rk4_propagate_series_length() {
+        let s0 = circular_state();
+        let series = rk4_propagate_series(&model(), s0, Second::new(60.0), 5, &()).unwrap();
+        assert_eq!(series.len(), 6);
+    }
+
+    #[test]
+    fn rk4_propagate_series_first_is_initial() {
+        let s0 = circular_state();
+        let series = rk4_propagate_series(&model(), s0, Second::new(60.0), 3, &()).unwrap();
+        assert_eq!(series[0], s0);
+    }
+}

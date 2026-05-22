@@ -439,4 +439,146 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn from_row_major_round_trip() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let m = p.to_row_major();
+        let p2 = StateCovariance::<Inertial>::from_row_major(m);
+        let m2 = p2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m[i][j] - m2[i][j]).abs() < 1e-30);
+            }
+        }
+    }
+
+    #[test]
+    fn from_block_components_same_as_from_row_major() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let p2 = StateCovariance::from_block_components(p.rr().clone(), *p.rv(), p.vv().clone());
+        let m1 = p.to_row_major();
+        let m2 = p2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-30);
+            }
+        }
+    }
+
+    #[test]
+    fn block_getters_rr_rv_vr_vv() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let m = p.to_row_major();
+        // rr block
+        assert!((p.rr().as_array()[0][0] - m[0][0]).abs() < 1e-30);
+        // vv block
+        assert!((p.vv().as_array()[0][0] - m[3][3]).abs() < 1e-30);
+        // rv block
+        assert!((p.rv().as_array()[0][0] - m[0][3]).abs() < 1e-30);
+        // vr = rvᵀ
+        assert!((p.vr().as_array()[0][0] - m[3][0]).abs() < 1e-30);
+    }
+
+    #[test]
+    fn is_symmetric_true_for_diagonal() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        assert!(p.is_symmetric(qtty::RelativeTolerance::new(1e-10)));
+    }
+
+    #[test]
+    fn symmetrise_in_place_makes_diagonal_symmetric() {
+        let mut p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        p.symmetrise_in_place();
+        assert!(p.is_symmetric(qtty::RelativeTolerance::new(1e-10)));
+    }
+
+    #[test]
+    fn rotate_by_identity_is_noop() {
+        use affn::ops::Rotation3;
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let identity =
+            Rotation3::from_matrix_unchecked([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        let p2: StateCovariance<Inertial> = p.rotate_by(&identity);
+        let m1 = p.to_row_major();
+        let m2 = p2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-20);
+            }
+        }
+    }
+
+    #[test]
+    fn relabel_preserves_data() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let m1 = p.to_row_major();
+        let p2: StateCovariance<Inertial> = p.relabel();
+        let m2 = p2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-30);
+            }
+        }
+    }
+
+    #[test]
+    fn process_noise_zero_has_all_zeros() {
+        let pn = ProcessNoise::<Inertial>::zero();
+        let m = pn.to_row_major();
+        for row in &m {
+            for val in row {
+                assert_eq!(*val, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn process_noise_add_to_increases_diagonal() {
+        let pn = ProcessNoise::<Inertial>::diagonal_from_sigmas(
+            [Quantity::<qtty::KmPerSecond>::new(1e-3); 3],
+            [Quantity::<qtty::KmPerSecondSquared>::new(1e-6); 3],
+            Second::new(1.0),
+        );
+        let mut p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let before = p.to_row_major()[0][0];
+        pn.add_to(&mut p);
+        let after = p.to_row_major()[0][0];
+        assert!(after > before);
+    }
+
+    #[test]
+    fn cholesky_negative_definite_returns_not_psd() {
+        // Build a matrix with a negative diagonal entry
+        let mut m = [[0.0_f64; 6]; 6];
+        for i in 0..6 {
+            m[i][i] = if i == 2 { -1.0 } else { 1.0 };
+        }
+        let p = StateCovariance::<Inertial>::from_row_major(m);
+        assert!(!p.is_positive_semidefinite(qtty::RelativeTolerance::new(1e-10)));
+    }
 }

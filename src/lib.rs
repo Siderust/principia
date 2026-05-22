@@ -35,6 +35,8 @@ pub use frames::{
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use gravity::spherical_harmonic_acceleration;
 pub use gravity::{GravityConstants, GravityFieldProvider};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use integrators::rk4_propagate_series;
 pub use integrators::{
     dop853_propagate, dop853_step, dopri5_propagate, dopri5_step, rk4_propagate, rk4_step,
     AdaptiveStepper, Dop853, Dop853Step, Dopri5, IntegratorTolerances, Rk4, Stepper,

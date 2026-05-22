@@ -653,3 +653,182 @@ where
     }
     Ok(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integrators::AdaptiveStepper;
+    use crate::models::TwoBody;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::unit::Kilometer;
+    use qtty::{GravitationalParameter, KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn circular_state() -> crate::state::DynamicsState<TT, Center, Inertial> {
+        let mu = 398_600.441_8_f64;
+        let r = 7000.0_f64;
+        let v = (mu / r).sqrt();
+        crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(r, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, v, 0.0),
+        )
+    }
+
+    fn model() -> TwoBody {
+        TwoBody::new(GravitationalParameter::new(398_600.441_8))
+    }
+
+    fn tol() -> IntegratorTolerances {
+        IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)
+    }
+
+    #[test]
+    fn with_h_max_overrides() {
+        let d = Dop853::new(tol()).with_h_max(Second::new(300.0));
+        assert!((d.h_max.value() - 300.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn with_h_min_overrides() {
+        let d = Dop853::new(tol()).with_h_min(Second::new(0.01));
+        assert!((d.h_min.value() - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn dop853_step_free_function_succeeds() {
+        let s0 = circular_state();
+        let result = dop853_step(
+            &model(),
+            &s0,
+            Second::new(30.0),
+            tol(),
+            Second::new(1e-6),
+            Second::new(86_400.0),
+            &(),
+        );
+        assert!(result.is_ok());
+        let (s1, h_used, _h_next, _dense, _rejected) = result.unwrap();
+        assert!(h_used.value() > 0.0);
+        let r = (s1.position.x().value().powi(2)
+            + s1.position.y().value().powi(2)
+            + s1.position.z().value().powi(2))
+        .sqrt();
+        assert!((r - 7000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn adaptive_stepper_trait_step_succeeds() {
+        let integrator = Dop853::new(tol());
+        let s0 = circular_state();
+        let (s1, _h_used, _h_next, _rejected) = integrator
+            .step(&model(), &s0, Second::new(30.0), &())
+            .unwrap();
+        let r = (s1.position.x().value().powi(2)
+            + s1.position.y().value().powi(2)
+            + s1.position.z().value().powi(2))
+        .sqrt();
+        assert!((r - 7000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn dop853_propagate_zero_duration_returns_initial() {
+        let s0 = circular_state();
+        let s = dop853_propagate(&model(), s0, Second::new(0.0), tol(), &()).unwrap();
+        assert_eq!(s, s0);
+    }
+
+    #[test]
+    fn dop853_propagate_full_orbit_radius_conserved() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8_f64;
+        let period = 2.0 * core::f64::consts::PI * (7000.0_f64.powi(3) / mu).sqrt();
+        let s = dop853_propagate(&model(), s0, Second::new(period), tol(), &()).unwrap();
+        let r = (s.position.x().value().powi(2)
+            + s.position.y().value().powi(2)
+            + s.position.z().value().powi(2))
+        .sqrt();
+        assert!((r - 7000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn dense_output_interpolates_within_step() {
+        let s0 = circular_state();
+        let (s1, h_used, _h_next, dense, _rejected) = dop853_step(
+            &model(),
+            &s0,
+            Second::new(60.0),
+            tol(),
+            Second::new(1e-6),
+            Second::new(86_400.0),
+            &(),
+        )
+        .unwrap();
+        let t_mid = s0.epoch + Second::new(h_used.value() * 0.5);
+        let mid = dense
+            .interpolate(t_mid)
+            .expect("interpolation should succeed for midpoint");
+        let r_mid = (mid.position.x().value().powi(2)
+            + mid.position.y().value().powi(2)
+            + mid.position.z().value().powi(2))
+        .sqrt();
+        let r_start = (s0.position.x().value().powi(2)
+            + s0.position.y().value().powi(2)
+            + s0.position.z().value().powi(2))
+        .sqrt();
+        let r_end = (s1.position.x().value().powi(2)
+            + s1.position.y().value().powi(2)
+            + s1.position.z().value().powi(2))
+        .sqrt();
+        assert!((r_mid - r_start).abs() < 1.0);
+        let _ = r_end;
+    }
+
+    #[test]
+    fn dense_output_none_outside_step() {
+        let s0 = circular_state();
+        let (_s1, h_used, _h_next, dense, _rejected) = dop853_step(
+            &model(),
+            &s0,
+            Second::new(60.0),
+            tol(),
+            Second::new(1e-6),
+            Second::new(86_400.0),
+            &(),
+        )
+        .unwrap();
+        let t_outside = s0.epoch + Second::new(h_used.value() * 2.0);
+        assert!(dense.interpolate(t_outside).is_none());
+    }
+
+    #[test]
+    fn step_below_minimum_triggered_by_tight_tolerance() {
+        let tight = IntegratorTolerances::uniform(1e-30, 1e-30, 1e-30);
+        let s0 = circular_state();
+        let h_min = Second::new(90.0);
+        let h_max = Second::new(100.0);
+        let result = dop853_step(&model(), &s0, Second::new(100.0), tight, h_min, h_max, &());
+        assert!(matches!(
+            result,
+            Err(crate::error::PrincipiaError::StepBelowMinimum { .. })
+        ));
+    }
+}

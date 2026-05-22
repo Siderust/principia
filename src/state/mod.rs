@@ -257,3 +257,96 @@ impl<F: ReferenceFrame> StateDerivative<F> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::unit::Kilometer;
+    use qtty::{KmPerSecond, KmPerSecondSquared, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn make_state() -> DynamicsState<TT, Center, Inertial> {
+        DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        )
+    }
+
+    fn make_deriv() -> StateDerivative<Inertial> {
+        StateDerivative::new(
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+            affn::cartesian::Acceleration::<Inertial, KmPerSecondSquared>::new(-0.8, 0.0, 0.0),
+        )
+    }
+
+    #[test]
+    fn partial_eq_same_state() {
+        let s = make_state();
+        let t = make_state();
+        assert_eq!(s, t);
+    }
+
+    #[test]
+    fn advance_with_epoch_advances_epoch() {
+        let s = make_state();
+        let d = make_deriv();
+        let dt = Second::new(10.0);
+        let s2 = s.advance_with_epoch(&d, dt);
+        assert!((s2.epoch - s.epoch - dt).value().abs() < 1e-12);
+    }
+
+    #[test]
+    fn state_derivative_velocity_accessor() {
+        let d = make_deriv();
+        assert_eq!(d.velocity().x().value(), d.vel.x().value());
+    }
+
+    #[test]
+    fn state_derivative_acceleration_accessor() {
+        let d = make_deriv();
+        assert_eq!(d.acceleration().x().value(), d.acc.x().value());
+    }
+
+    #[test]
+    fn scaled_doubles_components() {
+        let d = make_deriv();
+        let d2 = d.scaled(2.0);
+        assert!((d2.vel.y().value() - 2.0 * d.vel.y().value()).abs() < 1e-14);
+        assert!((d2.acc.x().value() - 2.0 * d.acc.x().value()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn add_sums_components() {
+        let d = make_deriv();
+        let d2 = d.add(&d);
+        assert!((d2.vel.y().value() - 2.0 * d.vel.y().value()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn rk4_combine_uniform_gives_same_as_scaled() {
+        let d = make_deriv();
+        let combined = StateDerivative::rk4_combine(&d, &d, &d, &d);
+        assert!((combined.vel.x().value() - d.vel.x().value()).abs() < 1e-14);
+        assert!((combined.acc.x().value() - d.acc.x().value()).abs() < 1e-14);
+    }
+}

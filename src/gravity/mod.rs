@@ -254,4 +254,86 @@ mod tests {
         assert!(acc[1].abs() < 1e-30);
         assert!(acc[2].abs() < 1e-30);
     }
+
+    struct WithJ2;
+    impl GravityFieldProvider for WithJ2 {
+        fn mu(&self) -> GravitationalParameter {
+            GravitationalParameter::new(398_600.441_8)
+        }
+        fn reference_radius(&self) -> Kilometers {
+            Kilometers::new(6_378.137)
+        }
+        fn max_degree(&self) -> usize {
+            2
+        }
+        fn c_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError> {
+            if n == 0 && m == 0 {
+                Ok(1.0)
+            } else if n == 2 && m == 0 {
+                // normalised J2 coefficient
+                Ok(-4.841_651_437e-4)
+            } else {
+                Ok(0.0)
+            }
+        }
+        fn s_normalized(&self, _n: usize, _m: usize) -> Result<f64, PrincipiaError> {
+            Ok(0.0)
+        }
+    }
+
+    #[test]
+    fn degree_two_order_zero_runs_legendre_recursion() {
+        let acc = spherical_harmonic_acceleration(&WithJ2, [7000.0, 0.0, 0.0], 2, 0).unwrap();
+        // Main gravity (~0.00813 km/s²) dominates; verify direction and magnitude
+        assert!(acc[0] < -0.001);
+    }
+
+    #[test]
+    fn degree_out_of_range_returns_error() {
+        let result = spherical_harmonic_acceleration(&TwoBodyOnly, [7000.0, 0.0, 0.0], 2, 0);
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::GeopotentialDegreeOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn order_greater_than_degree_returns_error() {
+        let result = spherical_harmonic_acceleration(&WithJ2, [7000.0, 0.0, 0.0], 1, 2);
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::InvalidStepRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn r_below_threshold_returns_error() {
+        let result = spherical_harmonic_acceleration(&TwoBodyOnly, [0.0, 0.0, 0.0], 0, 0);
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::DegenerateGeometry { .. })
+        ));
+    }
+
+    #[test]
+    fn constants_helper_packs_fields() {
+        let c = TwoBodyOnly.constants();
+        assert!((c.mu.value() - 398_600.441_8).abs() < 1e-6);
+        assert!((c.radius.value() - 6_378.137).abs() < 1e-6);
+        assert_eq!(c.max_degree, 0);
+    }
+
+    #[test]
+    fn c_nm_alias_matches_c_normalized() {
+        let a = TwoBodyOnly.c_nm(0, 0).unwrap();
+        let b = TwoBodyOnly.c_normalized(0, 0).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn s_nm_alias_matches_s_normalized() {
+        let a = TwoBodyOnly.s_nm(0, 0).unwrap();
+        let b = TwoBodyOnly.s_normalized(0, 0).unwrap();
+        assert_eq!(a, b);
+    }
 }

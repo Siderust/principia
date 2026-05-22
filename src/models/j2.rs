@@ -134,3 +134,93 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::length::Kilometers;
+    use qtty::unit::Kilometer;
+    use qtty::{GravitationalParameter, KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn model() -> J2 {
+        J2::new(
+            GravitationalParameter::new(398_600.441_8),
+            Kilometers::new(6_378.137),
+            1.082_626_68e-3,
+        )
+    }
+
+    fn state_equatorial(r: f64) -> crate::state::DynamicsState<TT, Center, Inertial> {
+        crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(r, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        )
+    }
+
+    fn state_degenerate() -> crate::state::DynamicsState<TT, Center, Inertial> {
+        crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        )
+    }
+
+    #[test]
+    fn name_is_j2() {
+        let m = model();
+        assert_eq!(
+            <J2 as AccelerationModel<(), TT, Center, Inertial>>::name(&m),
+            "j2"
+        );
+    }
+
+    #[test]
+    fn acceleration_equatorial_z_component_zero() {
+        let a = model()
+            .acceleration(&state_equatorial(7000.0), &())
+            .unwrap();
+        assert!(a.z().value().abs() < 1e-20);
+    }
+
+    #[test]
+    fn acceleration_degenerate_returns_error() {
+        assert!(model().acceleration(&state_degenerate(), &()).is_err());
+    }
+
+    #[test]
+    fn partials_d_acc_d_vel_is_zero() {
+        let p = model().partials(&state_equatorial(7000.0), &()).unwrap();
+        let v = p.d_acc_d_vel.as_array();
+        for row in v {
+            for val in row {
+                assert_eq!(*val, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn partials_degenerate_returns_error() {
+        assert!(model().partials(&state_degenerate(), &()).is_err());
+    }
+}

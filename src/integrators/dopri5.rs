@@ -316,3 +316,102 @@ where
     }
     Ok(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::TwoBody;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::unit::Kilometer;
+    use qtty::{GravitationalParameter, KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn circular_state() -> crate::state::DynamicsState<TT, Center, Inertial> {
+        let mu = 398_600.441_8_f64;
+        let r = 7000.0_f64;
+        let v = (mu / r).sqrt();
+        crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(r, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, v, 0.0),
+        )
+    }
+
+    fn model() -> TwoBody {
+        TwoBody::new(GravitationalParameter::new(398_600.441_8))
+    }
+
+    #[test]
+    fn with_h_max_overrides() {
+        let tol = IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9);
+        let d = Dopri5::new(tol).with_h_max(Second::new(300.0));
+        assert!((d.h_max.value() - 300.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn with_h_min_overrides() {
+        let tol = IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9);
+        let d = Dopri5::new(tol).with_h_min(Second::new(0.1));
+        assert!((d.h_min.value() - 0.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn adaptive_stepper_trait_step_succeeds() {
+        let tol = IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9);
+        let integrator = Dopri5::new(tol);
+        let s0 = circular_state();
+        let (s1, _h_used, _h_next, _rejected) = integrator
+            .step(&model(), &s0, Second::new(30.0), &())
+            .unwrap();
+        let r = (s1.position.x().value().powi(2)
+            + s1.position.y().value().powi(2)
+            + s1.position.z().value().powi(2))
+        .sqrt();
+        assert!((r - 7000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn dopri5_propagate_full_orbit_radius_conserved() {
+        let tol = IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9);
+        let s0 = circular_state();
+        let mu = 398_600.441_8_f64;
+        let period = 2.0 * core::f64::consts::PI * (7000.0_f64.powi(3) / mu).sqrt();
+        let s = dopri5_propagate(&model(), s0, Second::new(period), tol, &()).unwrap();
+        let r = (s.position.x().value().powi(2)
+            + s.position.y().value().powi(2)
+            + s.position.z().value().powi(2))
+        .sqrt();
+        assert!((r - 7000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn step_below_minimum_triggered_by_tight_tolerance() {
+        let tight = IntegratorTolerances::uniform(1e-30, 1e-30, 1e-30);
+        let s0 = circular_state();
+        let h_min = Second::new(90.0);
+        let h_max = Second::new(100.0);
+        let result = dopri5_step(&model(), &s0, Second::new(100.0), tight, h_min, h_max, &());
+        assert!(matches!(
+            result,
+            Err(crate::error::PrincipiaError::StepBelowMinimum { .. })
+        ));
+    }
+}

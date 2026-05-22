@@ -134,3 +134,104 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::unit::Kilometer;
+    use qtty::{GravitationalParameter, KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn make_state(r: f64) -> crate::state::DynamicsState<TT, Center, Inertial> {
+        let mu = 398_600.441_8_f64;
+        let v = (mu / r).sqrt();
+        crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(r, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, v, 0.0),
+        )
+    }
+
+    fn model() -> TwoBody {
+        TwoBody::new(GravitationalParameter::new(398_600.441_8))
+    }
+
+    #[test]
+    fn name_is_two_body() {
+        let m = model();
+        assert_eq!(
+            <TwoBody as AccelerationModel<(), TT, Center, Inertial>>::name(&m),
+            "two_body"
+        );
+    }
+
+    #[test]
+    fn acceleration_magnitude_approx_correct() {
+        let r = 7000.0;
+        let mu = 398_600.441_8_f64;
+        let a = model().acceleration(&make_state(r), &()).unwrap();
+        let a_mag = (a.x().value().powi(2) + a.y().value().powi(2) + a.z().value().powi(2)).sqrt();
+        let expected = mu / (r * r);
+        assert!((a_mag - expected).abs() / expected < 1e-10);
+    }
+
+    #[test]
+    fn acceleration_direction_is_minus_radial() {
+        let a = model().acceleration(&make_state(7000.0), &()).unwrap();
+        assert!(a.x().value() < 0.0);
+        assert!(a.y().value().abs() < 1e-30);
+    }
+
+    #[test]
+    fn acceleration_degenerate_returns_error() {
+        let state = crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(model().acceleration(&state, &()).is_err());
+    }
+
+    #[test]
+    fn partials_symmetry() {
+        let p = model().partials(&make_state(7000.0), &()).unwrap();
+        let m = p.d_acc_d_pos.as_array();
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    (m[i][j] - m[j][i]).abs() < 1e-20,
+                    "not symmetric at ({i},{j})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn partials_degenerate_returns_error() {
+        let state = crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(model().partials(&state, &()).is_err());
+    }
+}

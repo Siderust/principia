@@ -513,4 +513,87 @@ mod tests {
             *FrameMatrix6::<Frame>::identity().as_array()
         );
     }
+
+    #[test]
+    fn propagate_stm_nonzero_dt_returns_nontrivial_phi() {
+        let (_, phi) = propagate_stm(
+            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
+            state(),
+            Second::new(60.0),
+            &(),
+        )
+        .unwrap();
+        let m = phi.as_array();
+        // STM should differ from identity after propagation
+        let is_identity = m[0][0] == 1.0
+            && m[1][1] == 1.0
+            && m[2][2] == 1.0
+            && m[3][3] == 1.0
+            && m[4][4] == 1.0
+            && m[5][5] == 1.0
+            && m[0][1] == 0.0;
+        assert!(!is_identity, "STM should not equal identity after 60s");
+    }
+
+    #[test]
+    fn variational_config_default_step_is_30s() {
+        let cfg = VariationalConfig::default();
+        assert!((cfg.step.value() - 30.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn finite_diff_stm_nonzero_steps_differs_from_identity() {
+        let phi = finite_diff_stm(
+            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
+            state(),
+            Second::new(10.0),
+            3,
+            &(),
+        )
+        .unwrap();
+        let m = phi.as_array();
+        let is_identity = m[0][1] == 0.0 && m[0][3] == 0.0 && m[1][0] == 0.0;
+        // The STM after 3 steps should have off-diagonal entries
+        let _ = is_identity;
+        assert!(
+            (m[0][3]).abs() > 0.0,
+            "φ[0][3] should be nonzero (time * I block)"
+        );
+    }
+
+    #[test]
+    fn finite_diff_stm_series_length() {
+        let series = finite_diff_stm_series(
+            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
+            state(),
+            Second::new(10.0),
+            3,
+            &(),
+        )
+        .unwrap();
+        assert_eq!(series.len(), 4); // n_steps + 1
+    }
+
+    #[test]
+    fn finite_diff_stm_series_zero_steps_is_identity() {
+        let series = finite_diff_stm_series(
+            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
+            state(),
+            Second::new(10.0),
+            0,
+            &(),
+        )
+        .unwrap();
+        assert_eq!(series.len(), 1);
+        assert_eq!(
+            *series[0].as_array(),
+            *FrameMatrix6::<Frame>::identity().as_array()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of range")]
+    fn state_component_out_of_range_panics() {
+        state_component::<TT, Center, Frame>(&state(), 6);
+    }
 }

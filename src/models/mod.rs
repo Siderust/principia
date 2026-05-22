@@ -196,3 +196,131 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use qtty::unit::Kilometer;
+    use qtty::{GravitationalParameter, KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn make_state() -> DynamicsState<TT, Center, Inertial> {
+        let mu = 398_600.441_8_f64;
+        let r = 7000.0_f64;
+        let v = (mu / r).sqrt();
+        DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(r, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, v, 0.0),
+        )
+    }
+
+    struct MinimalModel;
+    impl<Ctx, S: tempoch::ContinuousScale, C: ReferenceCenter, F: ReferenceFrame>
+        AccelerationModel<Ctx, S, C, F> for MinimalModel
+    {
+        fn name(&self) -> &'static str {
+            "minimal"
+        }
+        fn acceleration(
+            &self,
+            _s: &DynamicsState<S, C, F>,
+            _ctx: &Ctx,
+        ) -> Result<Acceleration<F>, PrincipiaError> {
+            Ok(Acceleration::<F>::new(0.0, 0.0, 0.0))
+        }
+    }
+
+    #[test]
+    fn default_partials_returns_unavailable() {
+        let state = make_state();
+        let result = <MinimalModel as AccelerationModel<(), TT, Center, Inertial>>::partials(
+            &MinimalModel,
+            &state,
+            &(),
+        );
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::PartialsUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn acceleration_partials_zero() {
+        let p = AccelerationPartials::<Inertial>::zero();
+        let arr = p.d_acc_d_pos.as_array();
+        assert_eq!(arr[0][0], 0.0);
+    }
+
+    #[test]
+    fn composite_empty_name_and_counts() {
+        let c = CompositeModel::<(), TT, Center, Inertial>::empty();
+        assert_eq!(c.name(), "composite");
+        assert_eq!(c.len(), 0);
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn composite_default_is_empty() {
+        let c = CompositeModel::<(), TT, Center, Inertial>::default();
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn composite_push_increments_len() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let c =
+            CompositeModel::<(), TT, Center, Inertial>::empty().push(Box::new(TwoBody::new(mu)));
+        assert_eq!(c.len(), 1);
+        assert!(!c.is_empty());
+    }
+
+    #[test]
+    fn composite_acceleration_matches_single_model() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let single = TwoBody::new(mu);
+        let composite =
+            CompositeModel::<(), TT, Center, Inertial>::empty().push(Box::new(TwoBody::new(mu)));
+        let state = make_state();
+        let a_single = single.acceleration(&state, &()).unwrap();
+        let a_composite = composite.acceleration(&state, &()).unwrap();
+        assert!((a_single.x().value() - a_composite.x().value()).abs() < 1e-20);
+    }
+
+    #[test]
+    fn composite_partials_matches_single_model() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let single = TwoBody::new(mu);
+        let composite =
+            CompositeModel::<(), TT, Center, Inertial>::empty().push(Box::new(TwoBody::new(mu)));
+        let state = make_state();
+        let p_single = single.partials(&state, &()).unwrap();
+        let p_composite = composite.partials(&state, &()).unwrap();
+        let m1 = p_single.d_acc_d_pos.as_array();
+        let m2 = p_composite.d_acc_d_pos.as_array();
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-20);
+            }
+        }
+    }
+}
