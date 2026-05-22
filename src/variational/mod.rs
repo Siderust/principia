@@ -35,6 +35,7 @@ use crate::error::PrincipiaError;
 use crate::integrators::rk4_propagate;
 use crate::models::{AccelerationModel, AccelerationPartials};
 use crate::state::DynamicsState;
+use alloc::vec;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 use alloc::vec::Vec;
