@@ -1,0 +1,442 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vallés Puig, Ramon
+
+//! Cartesian state covariance and process noise.
+//!
+//! ## Scientific scope
+//!
+//! [`StateCovariance<F>`] stores a `6 × 6` Cartesian covariance in `[r, v]`
+//! block form. [`ProcessNoise<F>`] stores an additive process-noise matrix in
+//! the same layout. Covariances can be transported through a state-transition
+//! matrix `Φ` and rotated between inertial and local trajectory frames.
+//!
+//! ## Technical scope
+//!
+//! The covariance uses the canonical block decomposition
+//! `[[Σ_rr, Σ_rv], [Σ_vr, Σ_vv]]` with `Σ_vr = Σ_rvᵀ` derived on demand.
+//!
+//! ## References
+//!
+//! * Tapley, Schutz, Born, *Statistical Orbit Determination*, §4.
+//! * Montenbruck & Gill, *Satellite Orbits*, §7.
+
+use affn::frames::ReferenceFrame;
+use affn::matrix3::{FrameMatrix3, SymmetricFrameMatrix3};
+use affn::matrix6::FrameMatrix6;
+use affn::ops::Rotation3;
+use qtty::length::Kilometers;
+use qtty::{KmPerSecond, KmPerSecondSquared, Quantity, RelativeTolerance, Second};
+
+use crate::frames::LocalTrajectoryFrame;
+use crate::variational::StateTransitionMatrix;
+
+/// Frame-tagged Cartesian state covariance stored as three `3 × 3` blocks.
+#[derive(Debug, Clone, Copy)]
+pub struct StateCovariance<F: ReferenceFrame> {
+    rr: SymmetricFrameMatrix3<F>,
+    rv: FrameMatrix3<F>,
+    vv: SymmetricFrameMatrix3<F>,
+}
+
+impl<F: ReferenceFrame> StateCovariance<F> {
+    /// Construct from explicit `rr`, `rv`, and `vv` blocks.
+    #[inline]
+    pub fn from_blocks(
+        rr: SymmetricFrameMatrix3<F>,
+        rv: FrameMatrix3<F>,
+        vv: SymmetricFrameMatrix3<F>,
+    ) -> Self {
+        Self { rr, rv, vv }
+    }
+
+    /// Construct a diagonal covariance from typed one-sigma values.
+    pub fn diagonal_from_sigmas(
+        sigma_pos: [Kilometers; 3],
+        sigma_vel: [Quantity<KmPerSecond>; 3],
+    ) -> Self {
+        Self {
+            rr: SymmetricFrameMatrix3::from_diagonal([
+                sigma_pos[0].value().powi(2),
+                sigma_pos[1].value().powi(2),
+                sigma_pos[2].value().powi(2),
+            ]),
+            rv: FrameMatrix3::zero(),
+            vv: SymmetricFrameMatrix3::from_diagonal([
+                sigma_vel[0].value().powi(2),
+                sigma_vel[1].value().powi(2),
+                sigma_vel[2].value().powi(2),
+            ]),
+        }
+    }
+
+    /// Construct from a raw row-major `6 × 6` matrix.
+    pub fn from_row_major(m: [[f64; 6]; 6]) -> Self {
+        Self {
+            rr: SymmetricFrameMatrix3::from_upper([
+                [m[0][0], m[0][1], m[0][2]],
+                [m[1][0], m[1][1], m[1][2]],
+                [m[2][0], m[2][1], m[2][2]],
+            ]),
+            rv: FrameMatrix3::from_array([
+                [m[0][3], m[0][4], m[0][5]],
+                [m[1][3], m[1][4], m[1][5]],
+                [m[2][3], m[2][4], m[2][5]],
+            ]),
+            vv: SymmetricFrameMatrix3::from_upper([
+                [m[3][3], m[3][4], m[3][5]],
+                [m[4][3], m[4][4], m[4][5]],
+                [m[5][3], m[5][4], m[5][5]],
+            ]),
+        }
+    }
+
+    /// Construct from already-prepared block components.
+    #[inline]
+    pub fn from_block_components(
+        rr: SymmetricFrameMatrix3<F>,
+        rv: FrameMatrix3<F>,
+        vv: SymmetricFrameMatrix3<F>,
+    ) -> Self {
+        Self::from_blocks(rr, rv, vv)
+    }
+
+    /// Return the `Σ_rr` block.
+    #[inline]
+    pub fn rr(&self) -> &SymmetricFrameMatrix3<F> {
+        &self.rr
+    }
+
+    /// Return the `Σ_rv` block.
+    #[inline]
+    pub fn rv(&self) -> &FrameMatrix3<F> {
+        &self.rv
+    }
+
+    /// Return the derived `Σ_vr = Σ_rvᵀ` block.
+    #[inline]
+    pub fn vr(&self) -> FrameMatrix3<F> {
+        self.rv.transpose()
+    }
+
+    /// Return the `Σ_vv` block.
+    #[inline]
+    pub fn vv(&self) -> &SymmetricFrameMatrix3<F> {
+        &self.vv
+    }
+
+    /// Export the covariance as a full row-major `6 × 6` matrix.
+    pub fn to_row_major(&self) -> [[f64; 6]; 6] {
+        let rr = self.rr.as_array();
+        let rv = self.rv.as_array();
+        let vv = self.vv.as_array();
+        let mut out = [[0.0; 6]; 6];
+        for i in 0..3 {
+            for j in 0..3 {
+                out[i][j] = rr[i][j];
+                out[i][j + 3] = rv[i][j];
+                out[i + 3][j] = rv[j][i];
+                out[i + 3][j + 3] = vv[i][j];
+            }
+        }
+        out
+    }
+
+    /// Rotate the covariance by an instantaneous `3 × 3` rotation.
+    pub fn rotate_by<G: ReferenceFrame>(self, r: &Rotation3) -> StateCovariance<G> {
+        StateCovariance {
+            rr: self.rr.rotated_by::<G>(r),
+            rv: self.rv.rotated_by::<G>(r),
+            vv: self.vv.rotated_by::<G>(r),
+        }
+    }
+
+    /// Relabel the covariance with a different frame tag without changing data.
+    pub fn relabel<G: ReferenceFrame>(self) -> StateCovariance<G> {
+        StateCovariance {
+            rr: self.rr.relabel::<G>(),
+            rv: self.rv.relabel::<G>(),
+            vv: self.vv.relabel::<G>(),
+        }
+    }
+
+    /// Return `true` if the full `6 × 6` matrix is symmetric within `tol`.
+    #[allow(clippy::needless_range_loop)]
+    pub fn is_symmetric(&self, tol: RelativeTolerance) -> bool {
+        let m = self.to_row_major();
+        let t = tol.value();
+        for i in 0..6 {
+            for j in (i + 1)..6 {
+                let a = m[i][j];
+                let b = m[j][i];
+                let scale = a.abs().max(b.abs());
+                let diff = (a - b).abs();
+                if scale == 0.0 {
+                    if diff != 0.0 {
+                        return false;
+                    }
+                } else if diff > t * scale {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Return `true` if the covariance is positive semidefinite within `tol`.
+    #[allow(clippy::needless_range_loop)]
+    pub fn is_positive_semidefinite(&self, tol: RelativeTolerance) -> bool {
+        let m = self.to_row_major();
+        let mut a = [[0.0; 6]; 6];
+        for i in 0..6 {
+            for j in 0..6 {
+                a[i][j] = 0.5 * (m[i][j] + m[j][i]);
+            }
+        }
+        let trace: f64 = (0..6).map(|i| a[i][i]).sum();
+        let eps = tol.value() * trace / 6.0;
+        cholesky_in_place(&mut a, eps)
+    }
+
+    /// Symmetrize the stored blocks in place.
+    pub fn symmetrise_in_place(&mut self) {
+        let rr_arr = *self.rr.as_array();
+        let vv_arr = *self.vv.as_array();
+        let rv_arr = *self.rv.as_array();
+        self.rr = SymmetricFrameMatrix3::from_upper([
+            [
+                rr_arr[0][0],
+                0.5 * (rr_arr[0][1] + rr_arr[1][0]),
+                0.5 * (rr_arr[0][2] + rr_arr[2][0]),
+            ],
+            [
+                rr_arr[1][0],
+                rr_arr[1][1],
+                0.5 * (rr_arr[1][2] + rr_arr[2][1]),
+            ],
+            [rr_arr[2][0], rr_arr[2][1], rr_arr[2][2]],
+        ]);
+        self.vv = SymmetricFrameMatrix3::from_upper([
+            [
+                vv_arr[0][0],
+                0.5 * (vv_arr[0][1] + vv_arr[1][0]),
+                0.5 * (vv_arr[0][2] + vv_arr[2][0]),
+            ],
+            [
+                vv_arr[1][0],
+                vv_arr[1][1],
+                0.5 * (vv_arr[1][2] + vv_arr[2][1]),
+            ],
+            [vv_arr[2][0], vv_arr[2][1], vv_arr[2][2]],
+        ]);
+        self.rv = FrameMatrix3::from_array([
+            [
+                rv_arr[0][0],
+                0.5 * (rv_arr[0][1] + rv_arr[1][0]),
+                0.5 * (rv_arr[0][2] + rv_arr[2][0]),
+            ],
+            [
+                0.5 * (rv_arr[1][0] + rv_arr[0][1]),
+                rv_arr[1][1],
+                0.5 * (rv_arr[1][2] + rv_arr[2][1]),
+            ],
+            [
+                0.5 * (rv_arr[2][0] + rv_arr[0][2]),
+                0.5 * (rv_arr[2][1] + rv_arr[1][2]),
+                rv_arr[2][2],
+            ],
+        ]);
+    }
+
+    /// Propagate the covariance through a state-transition matrix: `P ← Φ P Φᵀ`.
+    pub fn transported_by(&self, phi: &StateTransitionMatrix<F>) -> Self {
+        let p = FrameMatrix6::<F>::from_array(self.to_row_major());
+        let propagated = phi.mat_mul(&p).mat_mul(&phi.transpose());
+        Self::from_row_major(*propagated.as_array())
+    }
+
+    /// Rotate this covariance into a local trajectory frame.
+    pub fn transform_into<Local: ReferenceFrame>(
+        &self,
+        frame: &LocalTrajectoryFrame<F, Local>,
+    ) -> StateCovariance<Local> {
+        StateCovariance {
+            rr: frame.dcm.similarity::<Local>(&self.rr),
+            rv: frame.dcm.similarity_general::<Local>(&self.rv),
+            vv: frame.dcm.similarity::<Local>(&self.vv),
+        }
+    }
+}
+
+impl<Local: ReferenceFrame> StateCovariance<Local> {
+    /// Rotate a local covariance back into its inertial parent frame.
+    pub fn transform_into_inertial<Inertial: ReferenceFrame>(
+        &self,
+        frame: &LocalTrajectoryFrame<Inertial, Local>,
+    ) -> StateCovariance<Inertial> {
+        let r = frame.rotation_inverse();
+        StateCovariance {
+            rr: self.rr.rotated_by::<Inertial>(&r),
+            rv: self.rv.rotated_by::<Inertial>(&r),
+            vv: self.vv.rotated_by::<Inertial>(&r),
+        }
+    }
+}
+
+/// Frame-tagged additive process-noise matrix in `[r, v]` ordering.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessNoise<F: ReferenceFrame> {
+    data: [[f64; 6]; 6],
+    _frame: core::marker::PhantomData<F>,
+}
+
+impl<F: ReferenceFrame> ProcessNoise<F> {
+    /// Return the zero process-noise matrix.
+    pub fn zero() -> Self {
+        Self {
+            data: [[0.0; 6]; 6],
+            _frame: core::marker::PhantomData,
+        }
+    }
+
+    /// Build a diagonal process-noise model from position-rate and
+    /// acceleration-rate sigmas over step `dt`.
+    pub fn diagonal_from_sigmas(
+        pos_rate: [Quantity<KmPerSecond>; 3],
+        vel_rate: [Quantity<KmPerSecondSquared>; 3],
+        dt: Second,
+    ) -> Self {
+        let dt_val = dt.value();
+        let mut data = [[0.0; 6]; 6];
+        for i in 0..3 {
+            data[i][i] = pos_rate[i].value().powi(2) * dt_val;
+            data[i + 3][i + 3] = vel_rate[i].value().powi(2) * dt_val;
+        }
+        Self {
+            data,
+            _frame: core::marker::PhantomData,
+        }
+    }
+
+    /// Add this process noise into a covariance in place.
+    #[allow(clippy::needless_range_loop)]
+    pub fn add_to(&self, cov: &mut StateCovariance<F>) {
+        *cov = StateCovariance::from_row_major({
+            let mut m = cov.to_row_major();
+            for i in 0..6 {
+                for j in 0..6 {
+                    m[i][j] += self.data[i][j];
+                }
+            }
+            m
+        });
+    }
+
+    /// Export the raw row-major `6 × 6` matrix.
+    #[inline]
+    pub fn to_row_major(&self) -> [[f64; 6]; 6] {
+        self.data
+    }
+}
+
+#[allow(clippy::needless_range_loop)]
+fn cholesky_in_place(a: &mut [[f64; 6]; 6], eps: f64) -> bool {
+    for i in 0..6 {
+        let pivot = a[i][i] + eps;
+        if pivot < 0.0 {
+            return false;
+        }
+        let sqrt_pivot = pivot.sqrt();
+        a[i][i] = sqrt_pivot;
+        if sqrt_pivot == 0.0 {
+            for j in (i + 1)..6 {
+                a[j][i] = 0.0;
+            }
+            continue;
+        }
+        let inv = 1.0 / sqrt_pivot;
+        for j in (i + 1)..6 {
+            a[j][i] *= inv;
+        }
+        for j in (i + 1)..6 {
+            let factor = a[j][i];
+            for k in j..6 {
+                a[k][j] -= factor * a[k][i];
+            }
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frames::{LocalTrajectoryFrame, RTN};
+    use affn::centers::ReferenceCenter;
+    use affn::frames::ReferenceFrame;
+    use affn::matrix6::FrameMatrix6;
+    use qtty::{KmPerSecond, Second};
+    use tempoch::{Time, TT};
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn state() -> crate::state::DynamicsState<TT, Center, Inertial> {
+        crate::state::DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, qtty::unit::Kilometer>::new(
+                7000.0, 0.0, 0.0,
+            ),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        )
+    }
+
+    #[test]
+    fn diagonal_covariance_is_psd() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        assert!(p.is_positive_semidefinite(RelativeTolerance::new(1e-10)));
+    }
+
+    #[test]
+    fn transport_with_identity_is_noop() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let phi = FrameMatrix6::<Inertial>::identity();
+        assert_eq!(p.to_row_major(), p.transported_by(&phi).to_row_major());
+    }
+
+    #[test]
+    fn inertial_local_round_trip() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let frame = LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&state()).unwrap();
+        let back = p.transform_into(&frame).transform_into_inertial(&frame);
+        let a = p.to_row_major();
+        let b = back.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((a[i][j] - b[i][j]).abs() < 1e-12);
+            }
+        }
+    }
+}

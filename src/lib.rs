@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vallés Puig, Ramon
+
+//! # principia — typed Newtonian numerical dynamics
+//!
+//! `principia` owns the reusable, domain-agnostic numerical mechanics layer:
+//! typed Cartesian states, acceleration models, integrators, propagation,
+//! variational equations, covariance transport, and gravity-field kernels.
+//!
+//! ## References
+//!
+//! * Vallado, *Fundamentals of Astrodynamics and Applications*.
+//! * Montenbruck & Gill, *Satellite Orbits*.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+extern crate alloc;
+
+pub mod covariance;
+pub mod error;
+pub mod frames;
+pub mod gravity;
+pub mod integrators;
+pub mod models;
+pub mod propagation;
+pub mod state;
+pub mod variational;
+
+pub use covariance::{ProcessNoise, StateCovariance};
+pub use error::PrincipiaError;
+pub use frames::{
+    lvlh_from_state, rtn_from_state, vnc_from_state, LocalTrajectoryFrame, LVLH, RTN, VNC,
+};
+pub use gravity::{spherical_harmonic_acceleration, GravityConstants, GravityFieldProvider};
+pub use integrators::{
+    dop853_propagate, dop853_step, dopri5_propagate, dopri5_step, rk4_propagate,
+    rk4_propagate_series, rk4_step, AdaptiveStepper, Dop853, Dop853Step, Dopri5,
+    IntegratorTolerances, Rk4, Stepper,
+};
+pub use models::{AccelerationModel, AccelerationPartials, CompositeModel, TwoBody, J2};
+pub use propagation::{
+    propagate, EventDetector, EventOccurrence, PropagationConfig, PropagationError,
+    PropagationResult, RadialThresholdEvent,
+};
+pub use state::{DynamicsState, StateDerivative};
+pub use variational::{
+    finite_diff_stm, finite_diff_stm_series, propagate_stm, propagate_stm_with,
+    StateTransitionMatrix, VariationalConfig,
+};

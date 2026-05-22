@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vallés Puig, Ramon
+
+//! Numerical two-body (point-mass) gravity model.
+//!
+//! ## Scientific scope
+//!
+//! Implements the Newtonian central-force acceleration
+//!
+//! ```text
+//! a = -μ · r / |r|³
+//! ```
+//!
+//! with analytic Jacobian
+//!
+//! ```text
+//! ∂a/∂r = -μ/|r|³ · (I - 3 r̂ r̂ᵀ),   ∂a/∂v = 0.
+//! ```
+//!
+//! This is the numerical companion to the analytic two-body propagation in
+//! [`keplerian`]; both are deliberate and have no runtime dependency on
+//! each other.
+//!
+//! ## Technical scope
+//!
+//! [`TwoBody`] is generic over the central-body gravitational parameter
+//! `μ`. No astronomy-specific body identity is assumed. Earth /
+//! Sun / Moon convenience constructors live in
+//! `siderust::astro::perturbations::earth` (and analogous astronomy
+//! adapters) — not in `principia`.
+//!
+//! ## References
+//!
+//! * Vallado, *Fundamentals of Astrodynamics and Applications*, §1.
+//! * Montenbruck & Gill, *Satellite Orbits*, §3.1.
+
+use affn::centers::ReferenceCenter;
+use affn::frames::ReferenceFrame;
+use affn::matrix3::FrameMatrix3;
+use qtty::dynamics::GravitationalParameter;
+use tempoch::ContinuousScale;
+
+use crate::error::PrincipiaError;
+use crate::models::{AccelerationModel, AccelerationPartials};
+use crate::state::{Acceleration, DynamicsState};
+
+/// Minimum radial magnitude below which two-body evaluation is considered
+/// degenerate (`100 km`). Avoids divide-by-zero without rejecting realistic
+/// orbits.
+const DEGENERATE_RADIUS_KM: f64 = 100.0;
+
+/// Newtonian point-mass gravity acceleration model.
+#[derive(Debug, Clone, Copy)]
+pub struct TwoBody {
+    /// Standard gravitational parameter `μ = G·M` (km³/s²).
+    pub mu: GravitationalParameter,
+}
+
+impl TwoBody {
+    /// Construct a two-body model from a typed gravitational parameter.
+    #[inline]
+    pub const fn new(mu: GravitationalParameter) -> Self {
+        Self { mu }
+    }
+}
+
+impl<Ctx, S, C, F> AccelerationModel<Ctx, S, C, F> for TwoBody
+where
+    S: ContinuousScale,
+    C: ReferenceCenter,
+    F: ReferenceFrame,
+{
+    fn name(&self) -> &'static str {
+        "two_body"
+    }
+
+    fn acceleration(
+        &self,
+        state: &DynamicsState<S, C, F>,
+        _ctx: &Ctx,
+    ) -> Result<Acceleration<F>, PrincipiaError> {
+        let rx = state.position.x().value();
+        let ry = state.position.y().value();
+        let rz = state.position.z().value();
+        let r2 = rx * rx + ry * ry + rz * rz;
+        let r = r2.sqrt();
+        if r < DEGENERATE_RADIUS_KM {
+            return Err(PrincipiaError::DegenerateGeometry {
+                reason: "radial magnitude below two-body degeneracy threshold",
+            });
+        }
+        let inv_r3 = 1.0 / (r2 * r);
+        let mu = self.mu.value();
+        Ok(Acceleration::<F>::new(
+            -mu * rx * inv_r3,
+            -mu * ry * inv_r3,
+            -mu * rz * inv_r3,
+        ))
+    }
+
+    fn partials(
+        &self,
+        state: &DynamicsState<S, C, F>,
+        _ctx: &Ctx,
+    ) -> Result<AccelerationPartials<F>, PrincipiaError> {
+        let rx = state.position.x().value();
+        let ry = state.position.y().value();
+        let rz = state.position.z().value();
+        let r2 = rx * rx + ry * ry + rz * rz;
+        let r = r2.sqrt();
+        if r < DEGENERATE_RADIUS_KM {
+            return Err(PrincipiaError::DegenerateGeometry {
+                reason: "radial magnitude below two-body degeneracy threshold",
+            });
+        }
+        let inv_r3 = 1.0 / (r2 * r);
+        let inv_r5 = inv_r3 / r2;
+        let mu = self.mu.value();
+        // A_r = -μ/r³ · (I - 3 r̂ r̂ᵀ)  = -μ/r³ I + 3μ/r⁵ · r rᵀ
+        let m_xx = -mu * inv_r3 + 3.0 * mu * rx * rx * inv_r5;
+        let m_yy = -mu * inv_r3 + 3.0 * mu * ry * ry * inv_r5;
+        let m_zz = -mu * inv_r3 + 3.0 * mu * rz * rz * inv_r5;
+        let m_xy = 3.0 * mu * rx * ry * inv_r5;
+        let m_xz = 3.0 * mu * rx * rz * inv_r5;
+        let m_yz = 3.0 * mu * ry * rz * inv_r5;
+        let d_acc_d_pos = FrameMatrix3::<F>::from_array([
+            [m_xx, m_xy, m_xz],
+            [m_xy, m_yy, m_yz],
+            [m_xz, m_yz, m_zz],
+        ]);
+        Ok(AccelerationPartials {
+            d_acc_d_pos,
+            d_acc_d_vel: FrameMatrix3::<F>::zero(),
+        })
+    }
+}
