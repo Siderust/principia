@@ -134,7 +134,7 @@ where
 /// # Errors
 ///
 /// Propagates any [`PrincipiaError`] returned by the model.
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub fn rk4_propagate_series<M, Ctx, S, C, F>(
     model: &M,
     state: DynamicsState<S, C, F>,

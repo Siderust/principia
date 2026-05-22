@@ -44,11 +44,3 @@ print_stdout = "warn"
 
 [lints.rustdoc]
 broken_intra_doc_links = "deny"
-
-[patch.crates-io]
-qtty = { path = "../qtty/qtty" }
-qtty-core = { path = "../qtty/qtty-core" }
-qtty-derive = { path = "../qtty/qtty-derive" }
-affn = { path = "../affn" }
-tempoch = { path = "../tempoch/tempoch" }
-tempoch-core = { path = "../tempoch/tempoch-core" }

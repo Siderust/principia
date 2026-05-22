@@ -97,7 +97,7 @@ where
 
 /// Linear sum of [`AccelerationModel`] components sharing the same `Ctx`,
 /// state, frame, and error surface.
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub struct CompositeModel<Ctx, S, C, F>
 where
     S: ContinuousScale,
@@ -107,7 +107,7 @@ where
     models: alloc::vec::Vec<alloc::boxed::Box<dyn AccelerationModel<Ctx, S, C, F>>>,
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 impl<Ctx, S, C, F> Default for CompositeModel<Ctx, S, C, F>
 where
     S: ContinuousScale,
@@ -119,7 +119,7 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 impl<Ctx, S, C, F> CompositeModel<Ctx, S, C, F>
 where
     S: ContinuousScale,
@@ -150,7 +150,7 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 impl<Ctx, S, C, F> AccelerationModel<Ctx, S, C, F> for CompositeModel<Ctx, S, C, F>
 where
     S: ContinuousScale,
