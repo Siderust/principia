@@ -139,8 +139,7 @@ impl fmt::Display for PrincipiaError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for PrincipiaError {}
+impl core::error::Error for PrincipiaError {}
 
 #[cfg(test)]
 mod tests {

@@ -31,7 +31,9 @@ pub mod rk4;
 
 pub use dop853::{dop853_propagate, dop853_step, Dop853, Dop853Step};
 pub use dopri5::{dopri5_propagate, dopri5_step, Dopri5};
-pub use rk4::{rk4_propagate, rk4_propagate_series, rk4_step, Rk4};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use rk4::rk4_propagate_series;
+pub use rk4::{rk4_propagate, rk4_step, Rk4};
 
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;

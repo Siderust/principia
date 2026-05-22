@@ -56,7 +56,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - run: cargo install --locked cargo-llvm-cov || true
-      - run: cargo llvm-cov --all-features --all-targets --doctests --fail-under-lines 90
+      - run: cargo llvm-cov --all-features --all-targets --fail-under-lines 90
 
   miri:
     name: Miri

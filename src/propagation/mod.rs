@@ -18,18 +18,29 @@
 //!
 //! * Hairer, Nørsett, Wanner, *Solving Ordinary Differential Equations I*, §II.5.
 
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use core::fmt;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+use alloc::boxed::Box;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use alloc::vec::Vec;
 
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use qtty::length::Kilometers;
-use qtty::{IntegratorTolerances, Second};
-use tempoch::{ContinuousScale, Time};
+use tempoch::ContinuousScale;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+use qtty::IntegratorTolerances;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use qtty::Second;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use tempoch::Time;
 
 use crate::error::PrincipiaError;
+#[cfg(any(feature = "alloc", feature = "std"))]
 use crate::integrators::AdaptiveStepper;
+#[cfg(any(feature = "alloc", feature = "std"))]
 use crate::models::AccelerationModel;
 use crate::state::DynamicsState;
 
@@ -77,8 +88,8 @@ impl fmt::Display for PropagationError {
     }
 }
 
-impl std::error::Error for PropagationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for PropagationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::StepControl(source) => Some(source),
             Self::EventEvaluation { source, .. } => Some(source),
@@ -88,6 +99,7 @@ impl std::error::Error for PropagationError {
 }
 
 /// Propagation configuration for the low-level driver.
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub struct PropagationConfig<Ctx, S, C, F>
 where
     S: ContinuousScale,
@@ -116,6 +128,7 @@ where
     pub max_steps: usize,
 }
 
+#[cfg(any(feature = "alloc", feature = "std"))]
 impl<Ctx, S, C, F> PropagationConfig<Ctx, S, C, F>
 where
     S: ContinuousScale,
@@ -296,6 +309,7 @@ where
 }
 
 /// Result returned by the propagation driver.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone)]
 pub struct PropagationResult<S, C, F>
 where
@@ -313,6 +327,7 @@ where
     pub steps_rejected: u32,
 }
 
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn lerp_state<S, C, F>(
     a: &DynamicsState<S, C, F>,
     b: &DynamicsState<S, C, F>,
@@ -343,6 +358,7 @@ where
 }
 
 /// Propagate a state with an adaptive stepper over the interval configured in `cfg`.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[allow(clippy::too_many_lines)]
 pub fn propagate<I, M, Ctx, S, C, F>(
     integrator: &I,

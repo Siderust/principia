@@ -25,8 +25,6 @@
 //! * Montenbruck & Gill, *Satellite Orbits*, §7.1.
 //! * Tapley, Schutz, Born, *Statistical Orbit Determination*, §4.
 
-use alloc::vec::Vec;
-
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use affn::matrix6::FrameMatrix6;
@@ -34,9 +32,15 @@ use qtty::Second;
 use tempoch::ContinuousScale;
 
 use crate::error::PrincipiaError;
-use crate::integrators::{rk4_propagate, rk4_propagate_series};
+use crate::integrators::rk4_propagate;
 use crate::models::{AccelerationModel, AccelerationPartials};
 use crate::state::DynamicsState;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+use alloc::vec::Vec;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+use crate::integrators::rk4_propagate_series;
 
 /// State-transition matrix `Φ(t, t₀)` tagged with frame `F`.
 pub type StateTransitionMatrix<F> = FrameMatrix6<F>;
@@ -384,6 +388,7 @@ where
 }
 
 /// Finite-difference STM series evaluated at every fixed step.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[allow(clippy::needless_range_loop)]
 pub fn finite_diff_stm_series<M, Ctx, S, C, F>(
     model: &M,

@@ -20,13 +20,15 @@
 //! * Montenbruck & Gill, *Satellite Orbits*, §3.2.
 //! * Vallado, *Fundamentals of Astrodynamics and Applications*, §8.6.
 
-use alloc::vec;
-
 use qtty::length::Kilometers;
 use qtty::GravitationalParameter;
 
 use crate::error::PrincipiaError;
 
+#[cfg(any(feature = "alloc", feature = "std"))]
+use alloc::vec;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
 const SQRT3: f64 = 1.732_050_808_568_877;
 
 /// Gravity-field constants packed into one helper value.
@@ -83,6 +85,7 @@ pub trait GravityFieldProvider {
 }
 
 /// Evaluate the body-fixed spherical-harmonic acceleration.
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub fn spherical_harmonic_acceleration<P: GravityFieldProvider + ?Sized>(
     provider: &P,
     body_fixed_pos_km: [f64; 3],
@@ -113,6 +116,7 @@ pub fn spherical_harmonic_acceleration<P: GravityFieldProvider + ?Sized>(
     compute_inner(mu, re, degree, max_m, provider, body_fixed_pos_km)
 }
 
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn compute_inner<P: GravityFieldProvider + ?Sized>(
     mu: f64,
     re: f64,
@@ -215,7 +219,7 @@ fn compute_inner<P: GravityFieldProvider + ?Sized>(
     Ok([ax, ay, az])
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "alloc", feature = "std")))]
 mod tests {
     use super::*;
 

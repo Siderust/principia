@@ -32,19 +32,22 @@ pub use error::PrincipiaError;
 pub use frames::{
     lvlh_from_state, rtn_from_state, vnc_from_state, LocalTrajectoryFrame, LVLH, RTN, VNC,
 };
-pub use gravity::{spherical_harmonic_acceleration, GravityConstants, GravityFieldProvider};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use gravity::spherical_harmonic_acceleration;
+pub use gravity::{GravityConstants, GravityFieldProvider};
 pub use integrators::{
-    dop853_propagate, dop853_step, dopri5_propagate, dopri5_step, rk4_propagate,
-    rk4_propagate_series, rk4_step, AdaptiveStepper, Dop853, Dop853Step, Dopri5,
-    IntegratorTolerances, Rk4, Stepper,
+    dop853_propagate, dop853_step, dopri5_propagate, dopri5_step, rk4_propagate, rk4_step,
+    AdaptiveStepper, Dop853, Dop853Step, Dopri5, IntegratorTolerances, Rk4, Stepper,
 };
-pub use models::{AccelerationModel, AccelerationPartials, CompositeModel, TwoBody, J2};
-pub use propagation::{
-    propagate, EventDetector, EventOccurrence, PropagationConfig, PropagationError,
-    PropagationResult, RadialThresholdEvent,
-};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use models::CompositeModel;
+pub use models::{AccelerationModel, AccelerationPartials, TwoBody, J2};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use propagation::{propagate, PropagationConfig, PropagationResult};
+pub use propagation::{EventDetector, EventOccurrence, PropagationError, RadialThresholdEvent};
 pub use state::{DynamicsState, StateDerivative};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use variational::finite_diff_stm_series;
 pub use variational::{
-    finite_diff_stm, finite_diff_stm_series, propagate_stm, propagate_stm_with,
-    StateTransitionMatrix, VariationalConfig,
+    finite_diff_stm, propagate_stm, propagate_stm_with, StateTransitionMatrix, VariationalConfig,
 };
