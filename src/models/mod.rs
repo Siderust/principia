@@ -18,7 +18,7 @@
 //!
 //! The trait is generic over the caller-owned context type `Ctx`. The
 //! mechanics kernel does not own `Ctx`; downstream adapters (e.g.
-//! `siderust::astro::perturbations::PerturbationContext`) supply ephemeris
+//! `siderust::astro::dynamics::PerturbationContext`) supply ephemeris
 //! / atmosphere / EOP slots.
 //!
 //! ## References

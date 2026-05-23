@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 Replaces the former generic surface of `siderust::astro::dynamics`.
 Astronomy-specific perturbations (drag, SRP, third-body, Earth
 geopotential adapters, Earth rotation, atmospheres, ephemeris-backed
-contexts) now live in `siderust::astro::perturbations`. See the
+contexts) now live in `siderust::astro::dynamics`. See the
 project README for the full old-to-new mapping.
 
 [0.1.0]: https://github.com/siderust/siderust/releases/tag/principia-v0.1.0

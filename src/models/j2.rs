@@ -19,7 +19,7 @@
 //! ## Technical scope
 //!
 //! [`J2`] is fully generic. Earth-specific convenience constructors live
-//! in `siderust::astro::perturbations::earth`. No astronomy-specific
+//! in `siderust::astro::dynamics::earth`. No astronomy-specific
 //! constants are baked into `principia`.
 //!
 //! ## References

@@ -29,7 +29,7 @@ qtty + affn + tempoch
 (plus optional `serde`). It does **not** depend on `siderust`,
 `keplerian`, `cheby`, ephemerides, Earth orientation data,
 observatory/atmosphere policy, or any adapter / dataset crate. Astronomy
-specifics live downstream in `siderust::astro::perturbations`.
+specifics live downstream in `siderust::astro::dynamics`.
 
 `principia` and `keplerian` deliberately overlap on two-body
 arithmetic: `keplerian` is the analytic closed-form path, `principia`

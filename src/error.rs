@@ -16,7 +16,7 @@
 //!   (gravity-field coefficient, caller-owned context member).
 //!
 //! Provider-specific astronomy errors (ephemeris, EOP, atmosphere)
-//! belong downstream in `siderust::astro::perturbations`.
+//! belong downstream in `siderust::astro::dynamics`.
 //!
 //! ## Technical scope
 //!

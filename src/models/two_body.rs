@@ -26,7 +26,7 @@
 //! [`TwoBody`] is generic over the central-body gravitational parameter
 //! `μ`. No astronomy-specific body identity is assumed. Earth /
 //! Sun / Moon convenience constructors live in
-//! `siderust::astro::perturbations::earth` (and analogous astronomy
+//! `siderust::astro::dynamics::earth` (and analogous astronomy
 //! adapters) — not in `principia`.
 //!
 //! ## References
