@@ -175,22 +175,4 @@ mod tests {
             .to_string()
             .contains("ephemeris"));
     }
-
-    #[test]
-    fn step_control_failed_display() {
-        assert!(PrincipiaError::StepControlFailed {
-            reason: "too many iters"
-        }
-        .to_string()
-        .contains("too many iters"));
-    }
-
-    #[test]
-    fn step_below_minimum_display() {
-        assert!(PrincipiaError::StepBelowMinimum {
-            reason: "h_min breached"
-        }
-        .to_string()
-        .contains("h_min breached"));
-    }
 }

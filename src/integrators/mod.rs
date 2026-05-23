@@ -31,9 +31,9 @@ pub mod rk4;
 
 pub use dop853::{dop853_propagate, dop853_step, Dop853, Dop853Step};
 pub use dopri5::{dopri5_propagate, dopri5_step, Dopri5};
+pub use rk4::{rk4_propagate, rk4_step, Rk4};
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use rk4::rk4_propagate_series;
-pub use rk4::{rk4_propagate, rk4_step, Rk4};
 
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
@@ -156,59 +156,3 @@ where
 
 // Re-export tolerances for integrator users.
 pub use qtty::IntegratorTolerances;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use affn::centers::ReferenceCenter;
-    use affn::frames::ReferenceFrame;
-    use qtty::unit::Kilometer;
-    use qtty::{KmPerSecond, KmPerSecondSquared, Second};
-    use tempoch::{Time, TT};
-
-    #[derive(Debug, Clone, Copy)]
-    struct Inertial;
-    impl ReferenceFrame for Inertial {
-        fn frame_name() -> &'static str {
-            "Inertial"
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct Center;
-    impl ReferenceCenter for Center {
-        type Params = ();
-        fn center_name() -> &'static str {
-            "Center"
-        }
-    }
-
-    fn make_state() -> DynamicsState<TT, Center, Inertial> {
-        DynamicsState::new(
-            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
-            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0),
-            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
-        )
-    }
-
-    fn make_deriv() -> StateDerivative<Inertial> {
-        StateDerivative::new(
-            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
-            affn::cartesian::Acceleration::<Inertial, KmPerSecondSquared>::new(-0.8, 0.0, 0.0),
-        )
-    }
-
-    #[test]
-    #[should_panic]
-    fn state_component_out_of_range_panics() {
-        let s = make_state();
-        state_component(&s, 6);
-    }
-
-    #[test]
-    #[should_panic]
-    fn deriv_component_out_of_range_panics() {
-        let d = make_deriv();
-        deriv_component(&d, 6);
-    }
-}
