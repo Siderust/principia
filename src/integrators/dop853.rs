@@ -973,4 +973,14 @@ mod tests {
             Err(crate::error::PrincipiaError::StepBelowMinimum { .. })
         ));
     }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn dop853_serde_roundtrip() {
+        let d = Dop853::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9));
+        let json = serde_json::to_string(&d).expect("serialize");
+        let d2: Dop853 = serde_json::from_str(&json).expect("deserialize");
+        assert!((d.h_max.value() - d2.h_max.value()).abs() < 1e-30);
+        assert!((d.h_min.value() - d2.h_min.value()).abs() < 1e-30);
+    }
 }

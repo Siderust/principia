@@ -701,4 +701,348 @@ mod tests {
         .unwrap();
         assert!(!result.events.is_empty());
     }
+
+    #[test]
+    fn propagation_error_display() {
+        let e = PropagationError::InvalidConfiguration(PrincipiaError::InvalidPropagationConfig {
+            reason: "bad",
+        });
+        assert!(e.to_string().contains("bad"), "got: {e}");
+
+        let e =
+            PropagationError::StepControl(PrincipiaError::StepControlFailed { reason: "diverged" });
+        assert!(e.to_string().contains("diverged"), "got: {e}");
+
+        let e = PropagationError::StepBelowMinimum {
+            h_requested: 1e-9,
+            h_min: 1e-6,
+        };
+        assert!(
+            e.to_string().contains("1e-9") || e.to_string().contains("1e"),
+            "got: {e}"
+        );
+
+        let e = PropagationError::MaxStepsExceeded { max_steps: 42 };
+        assert!(e.to_string().contains("42"), "got: {e}");
+
+        let e = PropagationError::EventEvaluation {
+            name: "my_event",
+            source: PrincipiaError::DegenerateGeometry { reason: "r=0" },
+        };
+        assert!(e.to_string().contains("my_event"), "got: {e}");
+    }
+
+    #[test]
+    fn propagation_error_source() {
+        use core::error::Error;
+        let e = PropagationError::InvalidConfiguration(PrincipiaError::InvalidPropagationConfig {
+            reason: "bad",
+        });
+        assert!(e.source().is_some());
+
+        let e = PropagationError::MaxStepsExceeded { max_steps: 1 };
+        assert!(e.source().is_none());
+
+        let e = PropagationError::StepBelowMinimum {
+            h_requested: 1e-9,
+            h_min: 1e-6,
+        };
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_h0() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let mut cfg =
+            PropagationConfig::<(), TT, Center, Inertial>::new(epoch, epoch + Second::new(100.0));
+        cfg.h0 = Second::new(0.0);
+        assert!(matches!(
+            cfg.validate(),
+            Err(PrincipiaError::InvalidPropagationConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_h_min_gt_h_max() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let cfg =
+            PropagationConfig::<(), TT, Center, Inertial>::new(epoch, epoch + Second::new(100.0))
+                .with_min_step(Second::new(1000.0))
+                .with_max_step(Second::new(10.0));
+        assert!(matches!(
+            cfg.validate(),
+            Err(PrincipiaError::InvalidPropagationConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_max_steps_zero() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let cfg =
+            PropagationConfig::<(), TT, Center, Inertial>::new(epoch, epoch + Second::new(100.0))
+                .with_max_steps(0);
+        assert!(matches!(
+            cfg.validate(),
+            Err(PrincipiaError::InvalidPropagationConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_valid_config() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let cfg =
+            PropagationConfig::<(), TT, Center, Inertial>::new(epoch, epoch + Second::new(3600.0));
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn propagate_with_output_every_produces_samples() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        let r = 7000.0_f64;
+        let period = 2.0 * core::f64::consts::PI * (r * r * r / mu).sqrt();
+        let half = period / 2.0;
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            s0.epoch,
+            s0.epoch + Second::new(half),
+        )
+        .with_output_every(Second::new(half / 4.0))
+        .with_initial_step(Second::new(60.0));
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            s0,
+            &cfg,
+            &(),
+        )
+        .unwrap();
+        // Should have initial + ~4 cadence samples + final
+        assert!(
+            result.samples.len() >= 3,
+            "got {} samples",
+            result.samples.len()
+        );
+    }
+
+    #[test]
+    fn propagate_with_output_at_explicit_epochs() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        let t1 = s0.epoch + Second::new(120.0);
+        let t2 = s0.epoch + Second::new(240.0);
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            s0.epoch,
+            s0.epoch + Second::new(360.0),
+        )
+        .with_output_at(alloc::vec![t1, t2])
+        .with_initial_step(Second::new(60.0));
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            s0,
+            &cfg,
+            &(),
+        )
+        .unwrap();
+        assert!(result.samples.len() >= 3);
+    }
+
+    #[test]
+    fn propagate_terminal_event_stops_early() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        let r = 7000.0_f64;
+        let period = 2.0 * core::f64::consts::PI * (r * r * r / mu).sqrt();
+        // Slightly eccentric orbit crosses 7050 km on the way up
+        let ecc_state = DynamicsState::new(
+            s0.epoch,
+            s0.position,
+            affn::cartesian::Velocity::<Inertial, qtty::KmPerSecond>::new(
+                0.0,
+                s0.velocity.y().value() * 1.005,
+                0.0,
+            ),
+        );
+        let event = RadialThresholdEvent::new(Kilometers::new(7050.0))
+            .terminal(true)
+            .direction(EventDirection::Rising);
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            ecc_state.epoch,
+            ecc_state.epoch + Second::new(period),
+        )
+        .with_event(Box::new(event));
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            ecc_state,
+            &cfg,
+            &(),
+        )
+        .unwrap();
+        // Terminal event should have stopped propagation before one full period
+        assert!(
+            result.steps_taken < 10_000,
+            "steps={} — expected early termination",
+            result.steps_taken
+        );
+        assert!(!result.events.is_empty());
+    }
+
+    #[test]
+    fn max_steps_exceeded_returns_error() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        let r = 7000.0_f64;
+        let period = 2.0 * core::f64::consts::PI * (r * r * r / mu).sqrt();
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            s0.epoch,
+            s0.epoch + Second::new(period),
+        )
+        .with_max_steps(1); // allow only 1 step
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            s0,
+            &cfg,
+            &(),
+        );
+        assert!(
+            matches!(result, Err(PropagationError::MaxStepsExceeded { .. })),
+            "expected MaxStepsExceeded, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn event_direction_rising_ignores_falling() {
+        // State starts above threshold 7000 and orbital dynamics keep it there in one step.
+        // A falling event (from above) should not fire.
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        // Use a threshold below the orbit (6800 km) with Rising direction → shouldn't fire
+        let event =
+            RadialThresholdEvent::new(Kilometers::new(6800.0)).direction(EventDirection::Rising);
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            s0.epoch,
+            s0.epoch + Second::new(600.0),
+        )
+        .with_event(Box::new(event));
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            s0,
+            &cfg,
+            &(),
+        )
+        .unwrap();
+        // No rising crossing of 6800 km from a 7000 km circular orbit
+        assert!(
+            result.events.is_empty(),
+            "no rising crossing expected, got {}",
+            result.events.len()
+        );
+    }
+
+    #[test]
+    fn event_direction_either_fires_on_any_crossing() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        let r = 7000.0_f64;
+        let period = 2.0 * core::f64::consts::PI * (r * r * r / mu).sqrt();
+        // Slightly eccentric orbit — will cross a threshold both ways
+        let ecc_state = DynamicsState::new(
+            s0.epoch,
+            s0.position,
+            affn::cartesian::Velocity::<Inertial, qtty::KmPerSecond>::new(
+                0.0,
+                s0.velocity.y().value() * 1.01,
+                0.0,
+            ),
+        );
+        let event =
+            RadialThresholdEvent::new(Kilometers::new(7120.0)).direction(EventDirection::Either);
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            ecc_state.epoch,
+            ecc_state.epoch + Second::new(period),
+        )
+        .with_event(Box::new(event));
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            ecc_state,
+            &cfg,
+            &(),
+        )
+        .unwrap();
+        assert!(!result.events.is_empty());
+    }
+
+    #[test]
+    fn propagate_builder_methods_work() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let cfg =
+            PropagationConfig::<(), TT, Center, Inertial>::new(epoch, epoch + Second::new(100.0))
+                .with_initial_step(Second::new(5.0))
+                .with_max_step(Second::new(50.0))
+                .with_min_step(Second::new(0.5))
+                .with_tolerances(IntegratorTolerances::uniform(1e-8, 1e-5, 1e-8))
+                .with_max_steps(500);
+        assert_eq!(cfg.h0.value(), 5.0);
+        assert_eq!(cfg.h_max.value(), 50.0);
+        assert_eq!(cfg.h_min.value(), 0.5);
+        assert_eq!(cfg.max_steps, 500);
+        assert!((cfg.total_duration_s() - 100.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn radial_threshold_event_name() {
+        let ev = RadialThresholdEvent::new(Kilometers::new(7000.0));
+        let state = circular_state();
+        assert_eq!(
+            <RadialThresholdEvent as EventDetector<(), TT, Center, Inertial>>::name(&ev),
+            "radial_threshold"
+        );
+        let g = <RadialThresholdEvent as EventDetector<(), TT, Center, Inertial>>::evaluate(
+            &ev,
+            &state,
+            &(),
+        )
+        .unwrap();
+        // Orbit is at exactly 7000 km, threshold is 7000 km → g ≈ 0
+        assert!(g.abs() < 1e-6, "g={g}");
+    }
+
+    #[test]
+    fn event_direction_falling_fires_correctly() {
+        let s0 = circular_state();
+        let mu = 398_600.441_8;
+        let r = 7000.0_f64;
+        let period = 2.0 * core::f64::consts::PI * (r * r * r / mu).sqrt();
+        let ecc_state = DynamicsState::new(
+            s0.epoch,
+            s0.position,
+            affn::cartesian::Velocity::<Inertial, qtty::KmPerSecond>::new(
+                0.0,
+                s0.velocity.y().value() * 1.01,
+                0.0,
+            ),
+        );
+        // Falling: orbit approaches from above apogee
+        let event =
+            RadialThresholdEvent::new(Kilometers::new(7121.0)).direction(EventDirection::Falling);
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            ecc_state.epoch,
+            ecc_state.epoch + Second::new(period),
+        )
+        .with_event(Box::new(event));
+        let result = propagate(
+            &Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)),
+            &TwoBody::new(GravitationalParameter::new(mu)),
+            ecc_state,
+            &cfg,
+            &(),
+        )
+        .unwrap();
+        // Should see a falling crossing on the way back down
+        assert!(!result.events.is_empty());
+    }
 }

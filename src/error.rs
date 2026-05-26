@@ -234,4 +234,54 @@ mod tests {
             .to_string()
             .contains("ephemeris"));
     }
+
+    #[test]
+    fn display_all_new_variants() {
+        use super::PrincipiaError;
+
+        let s = PrincipiaError::InvalidTolerance { context: "rtol" }.to_string();
+        assert!(s.contains("rtol"), "got: {s}");
+
+        let s = PrincipiaError::InvalidParameter {
+            reason: "h_min>h_max",
+        }
+        .to_string();
+        assert!(s.contains("h_min>h_max"), "got: {s}");
+
+        let s = PrincipiaError::NonPositiveValue { context: "mu" }.to_string();
+        assert!(s.contains("mu"), "got: {s}");
+
+        let s = PrincipiaError::NonFiniteValue {
+            context: "position",
+        }
+        .to_string();
+        assert!(s.contains("position"), "got: {s}");
+
+        let s = PrincipiaError::InvalidGravityRequest {
+            reason: "degree too high",
+        }
+        .to_string();
+        assert!(s.contains("degree"), "got: {s}");
+
+        let s = PrincipiaError::InvalidPropagationConfig {
+            reason: "h0 is zero",
+        }
+        .to_string();
+        assert!(s.contains("h0"), "got: {s}");
+
+        let s = PrincipiaError::StepControlFailed { reason: "diverged" }.to_string();
+        assert!(s.contains("diverged"), "got: {s}");
+
+        let s = PrincipiaError::StepBelowMinimum {
+            reason: "too small",
+        }
+        .to_string();
+        assert!(s.contains("too small"), "got: {s}");
+    }
+
+    #[test]
+    fn error_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<super::PrincipiaError>();
+    }
 }

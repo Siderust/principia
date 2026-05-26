@@ -779,4 +779,78 @@ mod tests {
         let p = StateCovariance::<Inertial>::from_row_major(m);
         assert!(!p.is_positive_semidefinite(qtty::RelativeTolerance::new(1e-10)));
     }
+
+    #[test]
+    fn try_diagonal_from_sigmas_accepts_valid() {
+        let result = StateCovariance::<Inertial>::try_diagonal_from_sigmas([
+            1.0, 2.0, 3.0, 0.001, 0.002, 0.003,
+        ]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_row_major_rejects_invalid_psd() {
+        let mut m = [[0.0_f64; 36]; 1][0];
+        // Negative diagonal → not PSD
+        for i in 0..6_usize {
+            m[i * 6 + i] = if i == 0 { -1.0 } else { 1.0 };
+        }
+        let result = StateCovariance::<Inertial>::try_from_row_major(m);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn transported_by_identity_is_noop() {
+        use crate::variational::StateTransitionMatrix;
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let phi = StateTransitionMatrix::<Inertial>::identity();
+        let p2 = p.transported_by(&phi);
+        let m1 = p.to_row_major();
+        let m2 = p2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-20, "[{i}][{j}]");
+            }
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn state_covariance_serde_roundtrip() {
+        let p = StateCovariance::<Inertial>::diagonal_from_sigmas(
+            [Kilometers::new(1.0); 3],
+            [Quantity::<KmPerSecond>::new(1e-3); 3],
+        );
+        let json = serde_json::to_string(&p).expect("serialize");
+        let p2: StateCovariance<Inertial> = serde_json::from_str(&json).expect("deserialize");
+        let m1 = p.to_row_major();
+        let m2 = p2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-30, "[{i}][{j}]");
+            }
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn process_noise_serde_roundtrip() {
+        let pn = ProcessNoise::<Inertial>::diagonal_from_sigmas(
+            [Quantity::<qtty::KmPerSecond>::new(1e-3); 3],
+            [Quantity::<qtty::KmPerSecondSquared>::new(1e-6); 3],
+            Second::new(1.0),
+        );
+        let json = serde_json::to_string(&pn).expect("serialize");
+        let pn2: ProcessNoise<Inertial> = serde_json::from_str(&json).expect("deserialize");
+        let m1 = pn.to_row_major();
+        let m2 = pn2.to_row_major();
+        for i in 0..6 {
+            for j in 0..6 {
+                assert!((m1[i][j] - m2[i][j]).abs() < 1e-30, "[{i}][{j}]");
+            }
+        }
+    }
 }

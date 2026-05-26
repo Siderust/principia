@@ -78,6 +78,10 @@ where
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "S: tempoch::Scale + tempoch::CoordinateScale, P: serde::Serialize",
+    deserialize = "S: tempoch::Scale + tempoch::CoordinateScale, P: serde::Deserialize<'de>"
+))]
 struct DynamicsStateSerde<S: tempoch::Scale + tempoch::CoordinateScale, P> {
     epoch: Time<S>,
     center_params: P,
@@ -88,10 +92,11 @@ struct DynamicsStateSerde<S: tempoch::Scale + tempoch::CoordinateScale, P> {
 #[cfg(feature = "serde")]
 impl<S, C, F> serde::Serialize for DynamicsState<S, C, F>
 where
-    S: ContinuousScale + tempoch::Scale + tempoch::CoordinateScale + serde::Serialize,
+    S: ContinuousScale + tempoch::Scale + tempoch::CoordinateScale,
     C: ReferenceCenter,
     C::Params: Clone + serde::Serialize,
     F: ReferenceFrame,
+    Time<S>: serde::Serialize,
 {
     fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
     where
@@ -118,10 +123,11 @@ where
 #[cfg(feature = "serde")]
 impl<'de, S, C, F> serde::Deserialize<'de> for DynamicsState<S, C, F>
 where
-    S: ContinuousScale + tempoch::Scale + tempoch::CoordinateScale + serde::Deserialize<'de>,
+    S: ContinuousScale + tempoch::Scale + tempoch::CoordinateScale,
     C: ReferenceCenter,
     C::Params: serde::Deserialize<'de>,
     F: ReferenceFrame,
+    Time<S>: serde::Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -590,5 +596,73 @@ mod tests {
         let combined = StateDerivative::rk4_combine(&d, &d, &d, &d);
         assert!((combined.vel.x().value() - d.vel.x().value()).abs() < 1e-14);
         assert!((combined.acc.x().value() - d.acc.x().value()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn advance_does_not_update_epoch() {
+        let s = make_state();
+        let d = make_deriv();
+        let dt = Second::new(5.0);
+        let s2 = s.advance(&d, dt);
+        // advance() leaves epoch unchanged
+        assert_eq!(s2.epoch, s.epoch);
+        // but advance_with_epoch() does update it
+        let s3 = s.advance_with_epoch(&d, dt);
+        assert!((s3.epoch - s.epoch - dt).value().abs() < 1e-12);
+    }
+
+    #[test]
+    fn is_finite_true_for_valid_state() {
+        assert!(make_state().is_finite());
+    }
+
+    #[test]
+    fn try_new_accepts_finite_state() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let result = DynamicsState::try_new(
+            epoch,
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn state_derivative_try_new_accepts_finite() {
+        let result = StateDerivative::try_new(
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+            affn::cartesian::Acceleration::<Inertial, KmPerSecondSquared>::new(-0.8, 0.0, 0.0),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn dynamics_state_serde_roundtrip() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(12345.0)).unwrap();
+        let s = DynamicsState::new(
+            epoch,
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 100.0, -50.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.1, 7.5, 0.2),
+        );
+        let json = serde_json::to_string(&s).expect("serialize");
+        let s2: DynamicsState<TT, Center, Inertial> =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!((s.position.x().value() - s2.position.x().value()).abs() < 1e-12);
+        assert!((s.position.y().value() - s2.position.y().value()).abs() < 1e-12);
+        assert!((s.position.z().value() - s2.position.z().value()).abs() < 1e-12);
+        assert!((s.velocity.x().value() - s2.velocity.x().value()).abs() < 1e-12);
+        assert!((s.velocity.y().value() - s2.velocity.y().value()).abs() < 1e-12);
+        assert!((s.velocity.z().value() - s2.velocity.z().value()).abs() < 1e-12);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn state_derivative_serde_roundtrip() {
+        let d = make_deriv();
+        let json = serde_json::to_string(&d).expect("serialize");
+        let d2: StateDerivative<Inertial> = serde_json::from_str(&json).expect("deserialize");
+        assert!((d.vel.x().value() - d2.vel.x().value()).abs() < 1e-12);
+        assert!((d.acc.x().value() - d2.acc.x().value()).abs() < 1e-12);
     }
 }

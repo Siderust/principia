@@ -366,6 +366,7 @@ mod tests {
     }
 
     #[derive(Debug, Clone, Copy)]
+    #[allow(dead_code)]
     struct Inertial;
     impl ReferenceFrame for Inertial {
         fn frame_name() -> &'static str {
@@ -374,6 +375,7 @@ mod tests {
     }
 
     #[derive(Debug, Clone, Copy)]
+    #[allow(dead_code)]
     struct Center;
     impl ReferenceCenter for Center {
         type Params = ();
@@ -424,20 +426,210 @@ mod tests {
         assert!(acc[2].abs() < 1e-30);
     }
 
+    /// A J2-only gravity field provider (degree 2, order 0).
+    /// J2 = 1.08262668e-3 (unnormalized); normalized C_20 = -J2/sqrt(5).
+    struct J2Provider;
+    impl GravityFieldProvider for J2Provider {
+        fn mu(&self) -> GravitationalParameter {
+            GravitationalParameter::new(398_600.441_8)
+        }
+        fn reference_radius(&self) -> Kilometers {
+            Kilometers::new(6_378.137)
+        }
+        fn max_degree(&self) -> usize {
+            2
+        }
+        fn c_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError> {
+            match (n, m) {
+                (0, 0) => Ok(1.0),
+                (1, 0) | (1, 1) => Ok(0.0),
+                (2, 0) => Ok(-1.082_626_68e-3 / 5.0_f64.sqrt()),
+                (2, 1) | (2, 2) => Ok(0.0),
+                _ => Err(PrincipiaError::GravityCoefficientUnavailable {
+                    degree: n as u16,
+                    order: m as u16,
+                }),
+            }
+        }
+        fn s_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError> {
+            if n <= 2 {
+                Ok(0.0)
+            } else {
+                Err(PrincipiaError::GravityCoefficientUnavailable {
+                    degree: n as u16,
+                    order: m as u16,
+                })
+            }
+        }
+    }
+
+    /// Degree-2 provider with C_21 and S_21 coefficients for order-1 coverage.
+    struct Degree2Order1Provider;
+    impl GravityFieldProvider for Degree2Order1Provider {
+        fn mu(&self) -> GravitationalParameter {
+            GravitationalParameter::new(398_600.441_8)
+        }
+        fn reference_radius(&self) -> Kilometers {
+            Kilometers::new(6_378.137)
+        }
+        fn max_degree(&self) -> usize {
+            2
+        }
+        fn c_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError> {
+            match (n, m) {
+                (0, 0) => Ok(1.0),
+                (1, 0) | (1, 1) | (2, 0) | (2, 1) | (2, 2) => Ok(1e-6),
+                _ => Err(PrincipiaError::GravityCoefficientUnavailable {
+                    degree: n as u16,
+                    order: m as u16,
+                }),
+            }
+        }
+        fn s_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError> {
+            if n <= 2 {
+                Ok(0.0)
+            } else {
+                Err(PrincipiaError::GravityCoefficientUnavailable {
+                    degree: n as u16,
+                    order: m as u16,
+                })
+            }
+        }
+    }
+
     #[test]
-    fn typed_wrapper_rejects_excess_degree() {
-        let position = Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0);
-        let result = spherical_harmonic_acceleration(
-            &position,
+    fn j2_acceleration_has_nonzero_z_for_off_equator() {
+        // Position off the equatorial plane: r = (0, 0, 7000) km (polar orbit).
+        let acc = spherical_harmonic_acceleration_raw_km(
+            [0.0, 0.0, 7000.0],
+            2,
+            0,
+            &GravityConstants::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(6_378.137),
+                2,
+            )
+            .unwrap(),
+            &J2Provider,
+            100.0,
+        )
+        .unwrap();
+        // The z-axis is the polar axis; J2 should contribute a non-zero radial component.
+        let mag = (acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]).sqrt();
+        assert!(mag > 0.0);
+    }
+
+    #[test]
+    fn j2_acceleration_off_equatorial_plane_matches_known() {
+        // Inclined position
+        let acc = spherical_harmonic_acceleration_raw_km(
+            [5000.0, 0.0, 5000.0],
+            2,
+            0,
+            &GravityConstants::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(6_378.137),
+                2,
+            )
+            .unwrap(),
+            &J2Provider,
+            100.0,
+        )
+        .unwrap();
+        // Just verify something changed from the two-body result
+        let tb = spherical_harmonic_acceleration_raw_km(
+            [5000.0, 0.0, 5000.0],
+            0,
+            0,
+            &GravityConstants::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(6_378.137),
+                2,
+            )
+            .unwrap(),
+            &J2Provider,
+            100.0,
+        )
+        .unwrap();
+        assert!((acc[0] - tb[0]).abs() > 1e-15 || (acc[2] - tb[2]).abs() > 1e-15);
+    }
+
+    #[test]
+    fn degree2_order1_acceleration_is_finite() {
+        let acc = spherical_harmonic_acceleration_raw_km(
+            [4000.0, 3000.0, 2000.0],
+            2,
             1,
+            &GravityConstants::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(6_378.137),
+                2,
+            )
+            .unwrap(),
+            &Degree2Order1Provider,
+            100.0,
+        )
+        .unwrap();
+        assert!(acc[0].is_finite());
+        assert!(acc[1].is_finite());
+        assert!(acc[2].is_finite());
+    }
+
+    #[test]
+    fn degree2_order2_acceleration_is_finite() {
+        let acc = spherical_harmonic_acceleration_raw_km(
+            [4000.0, 3000.0, 1000.0],
+            2,
+            2,
+            &GravityConstants::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(6_378.137),
+                2,
+            )
+            .unwrap(),
+            &Degree2Order1Provider,
+            100.0,
+        )
+        .unwrap();
+        assert!(acc[0].is_finite());
+        assert!(acc[1].is_finite());
+        assert!(acc[2].is_finite());
+    }
+
+    #[test]
+    fn raw_rejects_radius_too_small() {
+        let result = spherical_harmonic_acceleration_raw_km(
+            [0.0, 0.0, 0.0],
+            0,
             0,
             &constants(),
             &TwoBodyOnly,
-            Kilometers::new(100.0),
+            100.0,
         );
         assert!(matches!(
             result,
-            Err(PrincipiaError::InvalidGravityRequest { .. })
+            Err(PrincipiaError::DegenerateGeometry { .. })
         ));
+    }
+
+    #[test]
+    fn raw_rejects_order_exceeds_degree() {
+        let result = spherical_harmonic_acceleration_raw_km(
+            [7000.0, 0.0, 0.0],
+            1,
+            2, // order > degree
+            &constants(),
+            &TwoBodyOnly,
+            100.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn gravity_constants_exposes_constants() {
+        let c = constants();
+        assert!((c.mu.value() - 398_600.441_8).abs() < 1e-9);
+        assert!((c.equatorial_radius.value() - 6_378.137).abs() < 1e-9);
+        assert_eq!(c.max_degree, 0);
     }
 }

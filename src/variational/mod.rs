@@ -547,4 +547,132 @@ mod tests {
             Err(PrincipiaError::NonPositiveValue { .. })
         ));
     }
+
+    #[test]
+    fn propagate_stm_one_step_advances_state() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let model = TwoBody::new(mu);
+        let s0 = state();
+        let dt = Second::new(60.0);
+        let (s1, phi) = propagate_stm(&model, s0, dt, &()).unwrap();
+        // Epoch must advance by dt.
+        let elapsed = (s1.epoch - s0.epoch).value();
+        assert!((elapsed - 60.0).abs() < 1e-9, "elapsed={elapsed}");
+        // STM must not be identity (state evolved).
+        let identity = FrameMatrix6::<Frame>::identity();
+        let diff: f64 = phi
+            .as_array()
+            .iter()
+            .flatten()
+            .zip(identity.as_array().iter().flatten())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(diff > 1e-6, "STM should differ from identity after 60 s");
+    }
+
+    #[test]
+    fn propagate_stm_with_explicit_step_matches_default() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let model = TwoBody::new(mu);
+        let dt = Second::new(10.0);
+        let config = VariationalConfig::try_new(Second::new(5.0)).unwrap();
+        let (s1, phi1) = propagate_stm(&model, state(), dt, &()).unwrap();
+        let (s2, phi2) = propagate_stm_with(&model, state(), dt, &(), &config).unwrap();
+        // Both should give the same position to 1 mm (they use different sub-steps).
+        let dx = s1.position.x().value() - s2.position.x().value();
+        let dy = s1.position.y().value() - s2.position.y().value();
+        let dz = s1.position.z().value() - s2.position.z().value();
+        let dr = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!(dr < 1e-3, "position mismatch between two configs: dr={dr}");
+        // STMs should be close.
+        let diff: f64 = phi1
+            .as_array()
+            .iter()
+            .flatten()
+            .zip(phi2.as_array().iter().flatten())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(diff < 1e-3, "STM mismatch: diff={diff}");
+    }
+
+    #[test]
+    fn finite_diff_stm_one_step_is_not_identity() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let phi = finite_diff_stm(&TwoBody::new(mu), state(), Second::new(1.0), 1, &()).unwrap();
+        let identity = FrameMatrix6::<Frame>::identity();
+        let diff: f64 = phi
+            .as_array()
+            .iter()
+            .flatten()
+            .zip(identity.as_array().iter().flatten())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            diff > 1e-6,
+            "FD STM should differ from identity after 1 step"
+        );
+    }
+
+    #[test]
+    fn analytic_and_fd_stm_are_close() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let model = TwoBody::new(mu);
+        let dt = Second::new(30.0);
+        let config = VariationalConfig::try_new(Second::new(10.0)).unwrap();
+        let (_, phi_analytic) = propagate_stm_with(&model, state(), dt, &(), &config).unwrap();
+        let n_steps = 3usize;
+        let h_step = Second::new(dt.value() / n_steps as f64);
+        let phi_fd = finite_diff_stm(&model, state(), h_step, n_steps, &()).unwrap();
+        // The upper-left position-position block should agree to 1 %.
+        for i in 0..6 {
+            for j in 0..6 {
+                let a = phi_analytic.as_array()[i][j];
+                let fd = phi_fd.as_array()[i][j];
+                let err = (a - fd).abs();
+                assert!(
+                    err < 0.05 * a.abs().max(1e-8),
+                    "STM[{i},{j}]: analytic={a}, fd={fd}, err={err}"
+                );
+            }
+        }
+    }
+
+    #[cfg(any(feature = "alloc", feature = "std"))]
+    #[test]
+    fn finite_diff_stm_series_length() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let n = 4usize;
+        let series =
+            finite_diff_stm_series(&TwoBody::new(mu), state(), Second::new(5.0), n, &()).unwrap();
+        assert_eq!(series.len(), n + 1, "series should have n+1 entries");
+    }
+
+    #[cfg(any(feature = "alloc", feature = "std"))]
+    #[test]
+    fn finite_diff_stm_series_zero_steps_returns_identity() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let series =
+            finite_diff_stm_series(&TwoBody::new(mu), state(), Second::new(5.0), 0, &()).unwrap();
+        assert_eq!(series.len(), 1);
+        let identity = FrameMatrix6::<Frame>::identity();
+        assert_eq!(*series[0].as_array(), *identity.as_array());
+    }
+
+    #[test]
+    fn variational_config_default_is_valid() {
+        let cfg = VariationalConfig::default();
+        assert!(cfg.step.value() > 0.0);
+    }
+
+    #[test]
+    fn propagate_stm_backward_advances_epoch_negatively() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let s0 = state();
+        let (s_back, _) = propagate_stm(&TwoBody::new(mu), s0, Second::new(-30.0), &()).unwrap();
+        let elapsed = (s_back.epoch - s0.epoch).value();
+        assert!(elapsed < 0.0, "epoch should go backward: elapsed={elapsed}");
+    }
 }
