@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Adaptive RK 5(4) Dormand-Prince integrator with PI step controller.
@@ -44,7 +44,50 @@ use crate::error::PrincipiaError;
 use crate::models::AccelerationModel;
 use crate::state::DynamicsState;
 
+fn validate_tolerances(tol: IntegratorTolerances) -> Result<(), PrincipiaError> {
+    if !tol.rel.value().is_finite() || tol.rel.value() <= 0.0 {
+        return Err(PrincipiaError::InvalidTolerance {
+            context: "DOPRI5: relative tolerance must be finite and positive",
+        });
+    }
+    for abs_tol in tol.abs_pos {
+        if !abs_tol.value().is_finite() || abs_tol.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidTolerance {
+                context: "DOPRI5: absolute position tolerance must be finite and positive",
+            });
+        }
+    }
+    for abs_tol in tol.abs_vel {
+        if !abs_tol.value().is_finite() || abs_tol.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidTolerance {
+                context: "DOPRI5: absolute velocity tolerance must be finite and positive",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_step_bounds(h_min: Second, h_max: Second) -> Result<(), PrincipiaError> {
+    if !h_min.value().is_finite() || h_min.value() <= 0.0 {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOPRI5: h_min must be finite and positive",
+        });
+    }
+    if !h_max.value().is_finite() || h_max.value() <= 0.0 {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOPRI5: h_max must be finite and positive",
+        });
+    }
+    if h_min.value().abs() > h_max.value().abs() {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOPRI5: h_min must not exceed h_max",
+        });
+    }
+    Ok(())
+}
+
 /// Dormand-Prince 5(4) adaptive integrator.
+#[derive(Debug, Clone, Copy)]
 pub struct Dopri5 {
     /// Error control tolerances.
     pub tolerances: IntegratorTolerances,
@@ -52,6 +95,68 @@ pub struct Dopri5 {
     pub h_max: Second,
     /// Minimum allowed step size (seconds).
     pub h_min: Second,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Dopri5Serde {
+    rel: f64,
+    abs_pos: [f64; 3],
+    abs_vel: [f64; 3],
+    h_max_s: f64,
+    h_min_s: f64,
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Dopri5 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        Dopri5Serde {
+            rel: self.tolerances.rel.value(),
+            abs_pos: [
+                self.tolerances.abs_pos[0].value(),
+                self.tolerances.abs_pos[1].value(),
+                self.tolerances.abs_pos[2].value(),
+            ],
+            abs_vel: [
+                self.tolerances.abs_vel[0].value(),
+                self.tolerances.abs_vel[1].value(),
+                self.tolerances.abs_vel[2].value(),
+            ],
+            h_max_s: self.h_max.value(),
+            h_min_s: self.h_min.value(),
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Dopri5 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let helper = Dopri5Serde::deserialize(deserializer)?;
+        Ok(Self {
+            tolerances: IntegratorTolerances {
+                rel: qtty::tolerances::RelativeTolerance::new(helper.rel),
+                abs_pos: [
+                    qtty::tolerances::AbsoluteTolerancePosition::new_km(helper.abs_pos[0]),
+                    qtty::tolerances::AbsoluteTolerancePosition::new_km(helper.abs_pos[1]),
+                    qtty::tolerances::AbsoluteTolerancePosition::new_km(helper.abs_pos[2]),
+                ],
+                abs_vel: [
+                    qtty::tolerances::AbsoluteToleranceVelocity::new_km_s(helper.abs_vel[0]),
+                    qtty::tolerances::AbsoluteToleranceVelocity::new_km_s(helper.abs_vel[1]),
+                    qtty::tolerances::AbsoluteToleranceVelocity::new_km_s(helper.abs_vel[2]),
+                ],
+            },
+            h_max: Second::new(helper.h_max_s),
+            h_min: Second::new(helper.h_min_s),
+        })
+    }
 }
 
 impl Dopri5 {
@@ -62,6 +167,18 @@ impl Dopri5 {
             h_max: Second::new(86_400.0),
             h_min: Second::new(1e-6),
         }
+    }
+
+    /// Construct and validate the integrator configuration.
+    pub fn try_new(tolerances: IntegratorTolerances) -> Result<Self, PrincipiaError> {
+        let integrator = Self::new(tolerances);
+        integrator.validate()?;
+        Ok(integrator)
+    }
+
+    fn validate(&self) -> Result<(), PrincipiaError> {
+        validate_tolerances(self.tolerances)?;
+        validate_step_bounds(self.h_min, self.h_max)
     }
 
     /// Override the maximum step size.
@@ -91,6 +208,7 @@ where
         h_try: Second,
         ctx: &Ctx,
     ) -> Result<(DynamicsState<S, C, F>, Second, Second, u32), PrincipiaError> {
+        self.validate()?;
         dopri5_step(
             model,
             state,
@@ -129,6 +247,14 @@ where
     C: ReferenceCenter,
     F: ReferenceFrame,
 {
+    validate_tolerances(tol)?;
+    validate_step_bounds(h_min, h_max)?;
+    if !h_try.value().is_finite() || h_try.value() == 0.0 {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOPRI5: trial step must be finite and non-zero",
+        });
+    }
+
     // Butcher tableau — Dormand-Prince 5(4).
     let c2 = 1.0 / 5.0;
     let c3 = 3.0 / 10.0;
@@ -246,6 +372,8 @@ where
             } else {
                 tol.abs_vel[i - 3].value()
             };
+            // `validate_tolerances` enforces strictly positive finite absolute and
+            // relative tolerances, so the scaling denominator stays positive here.
             let sc = abs_tol + tol.rel.value() * y0i.abs().max(y7i.abs());
             let r = err / sc;
             err_norm += r * r;
@@ -298,6 +426,7 @@ where
     C: ReferenceCenter,
     F: ReferenceFrame,
 {
+    validate_tolerances(tol)?;
     let total_dt_s = total_dt.value();
     let mut s = state;
     let mut t = 0.0;
@@ -360,6 +489,15 @@ mod tests {
     }
 
     #[test]
+    fn try_new_rejects_invalid_tolerances() {
+        let bad = IntegratorTolerances::uniform(0.0, 1e-6, 1e-9);
+        assert!(matches!(
+            Dopri5::try_new(bad),
+            Err(PrincipiaError::InvalidTolerance { .. })
+        ));
+    }
+
+    #[test]
     fn with_h_max_overrides() {
         let tol = IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9);
         let d = Dopri5::new(tol).with_h_max(Second::new(300.0));
@@ -413,5 +551,15 @@ mod tests {
             result,
             Err(crate::error::PrincipiaError::StepBelowMinimum { .. })
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn dopri5_serde_roundtrip() {
+        let d = Dopri5::new(IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9));
+        let json = serde_json::to_string(&d).expect("serialize");
+        let d2: Dopri5 = serde_json::from_str(&json).expect("deserialize");
+        assert!((d.h_max.value() - d2.h_max.value()).abs() < 1e-30);
+        assert!((d.h_min.value() - d2.h_min.value()).abs() < 1e-30);
     }
 }

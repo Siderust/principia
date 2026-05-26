@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Numerical two-body (point-mass) gravity model.
@@ -26,7 +26,7 @@
 //! [`TwoBody`] is generic over the central-body gravitational parameter
 //! `μ`. No astronomy-specific body identity is assumed. Earth /
 //! Sun / Moon convenience constructors live in
-//! `siderust::astro::perturbations::earth` (and analogous astronomy
+//! `siderust::astro::dynamics::earth` (and analogous astronomy
 //! adapters) — not in `principia`.
 //!
 //! ## References
@@ -51,16 +51,64 @@ const DEGENERATE_RADIUS_KM: f64 = 100.0;
 
 /// Newtonian point-mass gravity acceleration model.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TwoBody {
     /// Standard gravitational parameter `μ = G·M` (km³/s²).
     pub mu: GravitationalParameter,
+    min_radius: f64,
 }
 
 impl TwoBody {
     /// Construct a two-body model from a typed gravitational parameter.
     #[inline]
     pub const fn new(mu: GravitationalParameter) -> Self {
-        Self { mu }
+        Self {
+            mu,
+            min_radius: DEGENERATE_RADIUS_KM,
+        }
+    }
+
+    /// Fallible constructor: validates that `mu` is strictly positive and finite.
+    ///
+    /// # Errors
+    /// [`PrincipiaError::NonPositiveValue`] if `mu ≤ 0` or non-finite.
+    pub fn try_new(mu: GravitationalParameter) -> Result<Self, PrincipiaError> {
+        if !mu.value().is_finite() || mu.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "TwoBody: gravitational parameter must be finite and positive",
+            });
+        }
+        Ok(Self {
+            mu,
+            min_radius: DEGENERATE_RADIUS_KM,
+        })
+    }
+
+    /// Returns a copy with the degenerate-radius threshold set to `min_radius_km`.
+    ///
+    /// The threshold is the minimum allowed distance from the centre of mass in km.
+    /// Acceleration evaluations closer than this return [`PrincipiaError::DegenerateGeometry`].
+    ///
+    /// # Errors
+    /// [`PrincipiaError::NonPositiveValue`] if `min_radius_km ≤ 0` or non-finite.
+    pub fn try_with_min_radius(self, min_radius_km: f64) -> Result<Self, PrincipiaError> {
+        if !min_radius_km.is_finite() || min_radius_km <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "TwoBody: min_radius_km must be finite and positive",
+            });
+        }
+        Ok(Self {
+            min_radius: min_radius_km,
+            ..self
+        })
+    }
+
+    /// Returns a copy with the degenerate-radius threshold set to `min_radius_km`.
+    ///
+    /// Panics if `min_radius_km ≤ 0` or non-finite.
+    pub fn with_min_radius(self, min_radius_km: f64) -> Self {
+        self.try_with_min_radius(min_radius_km)
+            .expect("min_radius_km must be positive and finite")
     }
 }
 
@@ -84,7 +132,7 @@ where
         let rz = state.position.z().value();
         let r2 = rx * rx + ry * ry + rz * rz;
         let r = r2.sqrt();
-        if r < DEGENERATE_RADIUS_KM {
+        if r < self.min_radius {
             return Err(PrincipiaError::DegenerateGeometry {
                 reason: "radial magnitude below two-body degeneracy threshold",
             });
@@ -108,7 +156,7 @@ where
         let rz = state.position.z().value();
         let r2 = rx * rx + ry * ry + rz * rz;
         let r = r2.sqrt();
-        if r < DEGENERATE_RADIUS_KM {
+        if r < self.min_radius {
             return Err(PrincipiaError::DegenerateGeometry {
                 reason: "radial magnitude below two-body degeneracy threshold",
             });
@@ -116,7 +164,6 @@ where
         let inv_r3 = 1.0 / (r2 * r);
         let inv_r5 = inv_r3 / r2;
         let mu = self.mu.value();
-        // A_r = -μ/r³ · (I - 3 r̂ r̂ᵀ)  = -μ/r³ I + 3μ/r⁵ · r rᵀ
         let m_xx = -mu * inv_r3 + 3.0 * mu * rx * rx * inv_r5;
         let m_yy = -mu * inv_r3 + 3.0 * mu * ry * ry * inv_r5;
         let m_zz = -mu * inv_r3 + 3.0 * mu * rz * rz * inv_r5;
@@ -173,6 +220,28 @@ mod tests {
 
     fn model() -> TwoBody {
         TwoBody::new(GravitationalParameter::new(398_600.441_8))
+    }
+
+    #[test]
+    fn try_new_rejects_non_positive_or_non_finite_mu() {
+        for mu in [0.0, -1.0, f64::NAN] {
+            let result = TwoBody::try_new(GravitationalParameter::new(mu));
+            assert!(matches!(
+                result,
+                Err(PrincipiaError::NonPositiveValue { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn try_with_min_radius_rejects_invalid_threshold() {
+        for min_radius in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            let result = model().try_with_min_radius(min_radius);
+            assert!(matches!(
+                result,
+                Err(PrincipiaError::NonPositiveValue { .. })
+            ));
+        }
     }
 
     #[test]

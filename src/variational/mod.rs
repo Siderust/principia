@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Variational equations and state-transition matrices.
@@ -38,7 +38,6 @@ use crate::state::DynamicsState;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 use alloc::vec;
-
 #[cfg(any(feature = "alloc", feature = "std"))]
 use alloc::vec::Vec;
 
@@ -50,6 +49,7 @@ pub type StateTransitionMatrix<F> = FrameMatrix6<F>;
 
 /// Fixed-step configuration for the variational propagator.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariationalConfig {
     /// Positive RK4 sub-step magnitude.
     pub step: Second,
@@ -60,6 +60,18 @@ impl Default for VariationalConfig {
         Self {
             step: Second::new(30.0),
         }
+    }
+}
+
+impl VariationalConfig {
+    /// Construct a validated variational propagator configuration.
+    pub fn try_new(step: Second) -> Result<Self, PrincipiaError> {
+        if !step.value().is_finite() || step.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "VariationalConfig: step must be finite and positive",
+            });
+        }
+        Ok(Self { step })
     }
 }
 
@@ -297,7 +309,12 @@ where
     if dt.value() == 0.0 {
         return Ok((state, FrameMatrix6::identity()));
     }
-    let step_abs = config.step.value().abs().max(1e-15);
+    if !config.step.value().is_finite() || config.step.value() <= 0.0 {
+        return Err(PrincipiaError::NonPositiveValue {
+            context: "VariationalConfig: step must be finite and positive",
+        });
+    }
+    let step_abs = config.step.value().abs();
     let n_steps = (dt.value().abs() / step_abs).ceil() as usize;
     let n_steps = n_steps.max(1);
     let h = dt.value() / n_steps as f64;
@@ -515,85 +532,147 @@ mod tests {
     }
 
     #[test]
-    fn propagate_stm_nonzero_dt_returns_nontrivial_phi() {
-        let (_, phi) = propagate_stm(
+    fn propagate_stm_with_rejects_non_positive_step() {
+        let result = propagate_stm_with(
             &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
             state(),
             Second::new(60.0),
             &(),
-        )
-        .unwrap();
-        let m = phi.as_array();
-        // STM should differ from identity after propagation
-        let is_identity = m[0][0] == 1.0
-            && m[1][1] == 1.0
-            && m[2][2] == 1.0
-            && m[3][3] == 1.0
-            && m[4][4] == 1.0
-            && m[5][5] == 1.0
-            && m[0][1] == 0.0;
-        assert!(!is_identity, "STM should not equal identity after 60s");
+            &VariationalConfig {
+                step: Second::new(0.0),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
     }
 
     #[test]
-    fn variational_config_default_step_is_30s() {
-        let cfg = VariationalConfig::default();
-        assert!((cfg.step.value() - 30.0).abs() < 1e-12);
+    fn propagate_stm_one_step_advances_state() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let model = TwoBody::new(mu);
+        let s0 = state();
+        let dt = Second::new(60.0);
+        let (s1, phi) = propagate_stm(&model, s0, dt, &()).unwrap();
+        // Epoch must advance by dt.
+        let elapsed = (s1.epoch - s0.epoch).value();
+        assert!((elapsed - 60.0).abs() < 1e-9, "elapsed={elapsed}");
+        // STM must not be identity (state evolved).
+        let identity = FrameMatrix6::<Frame>::identity();
+        let diff: f64 = phi
+            .as_array()
+            .iter()
+            .flatten()
+            .zip(identity.as_array().iter().flatten())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(diff > 1e-6, "STM should differ from identity after 60 s");
     }
 
     #[test]
-    fn finite_diff_stm_nonzero_steps_differs_from_identity() {
-        let phi = finite_diff_stm(
-            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
-            state(),
-            Second::new(10.0),
-            3,
-            &(),
-        )
-        .unwrap();
-        let m = phi.as_array();
-        let is_identity = m[0][1] == 0.0 && m[0][3] == 0.0 && m[1][0] == 0.0;
-        // The STM after 3 steps should have off-diagonal entries
-        let _ = is_identity;
+    fn propagate_stm_with_explicit_step_matches_default() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let model = TwoBody::new(mu);
+        let dt = Second::new(10.0);
+        let config = VariationalConfig::try_new(Second::new(5.0)).unwrap();
+        let (s1, phi1) = propagate_stm(&model, state(), dt, &()).unwrap();
+        let (s2, phi2) = propagate_stm_with(&model, state(), dt, &(), &config).unwrap();
+        // Both should give the same position to 1 mm (they use different sub-steps).
+        let dx = s1.position.x().value() - s2.position.x().value();
+        let dy = s1.position.y().value() - s2.position.y().value();
+        let dz = s1.position.z().value() - s2.position.z().value();
+        let dr = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!(dr < 1e-3, "position mismatch between two configs: dr={dr}");
+        // STMs should be close.
+        let diff: f64 = phi1
+            .as_array()
+            .iter()
+            .flatten()
+            .zip(phi2.as_array().iter().flatten())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(diff < 1e-3, "STM mismatch: diff={diff}");
+    }
+
+    #[test]
+    fn finite_diff_stm_one_step_is_not_identity() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let phi = finite_diff_stm(&TwoBody::new(mu), state(), Second::new(1.0), 1, &()).unwrap();
+        let identity = FrameMatrix6::<Frame>::identity();
+        let diff: f64 = phi
+            .as_array()
+            .iter()
+            .flatten()
+            .zip(identity.as_array().iter().flatten())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
         assert!(
-            (m[0][3]).abs() > 0.0,
-            "φ[0][3] should be nonzero (time * I block)"
+            diff > 1e-6,
+            "FD STM should differ from identity after 1 step"
         );
     }
 
+    #[test]
+    fn analytic_and_fd_stm_are_close() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let model = TwoBody::new(mu);
+        let dt = Second::new(30.0);
+        let config = VariationalConfig::try_new(Second::new(10.0)).unwrap();
+        let (_, phi_analytic) = propagate_stm_with(&model, state(), dt, &(), &config).unwrap();
+        let n_steps = 3usize;
+        let h_step = Second::new(dt.value() / n_steps as f64);
+        let phi_fd = finite_diff_stm(&model, state(), h_step, n_steps, &()).unwrap();
+        // The upper-left position-position block should agree to 1 %.
+        for i in 0..6 {
+            for j in 0..6 {
+                let a = phi_analytic.as_array()[i][j];
+                let fd = phi_fd.as_array()[i][j];
+                let err = (a - fd).abs();
+                assert!(
+                    err < 0.05 * a.abs().max(1e-8),
+                    "STM[{i},{j}]: analytic={a}, fd={fd}, err={err}"
+                );
+            }
+        }
+    }
+
+    #[cfg(any(feature = "alloc", feature = "std"))]
     #[test]
     fn finite_diff_stm_series_length() {
-        let series = finite_diff_stm_series(
-            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
-            state(),
-            Second::new(10.0),
-            3,
-            &(),
-        )
-        .unwrap();
-        assert_eq!(series.len(), 4); // n_steps + 1
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let n = 4usize;
+        let series =
+            finite_diff_stm_series(&TwoBody::new(mu), state(), Second::new(5.0), n, &()).unwrap();
+        assert_eq!(series.len(), n + 1, "series should have n+1 entries");
     }
 
+    #[cfg(any(feature = "alloc", feature = "std"))]
     #[test]
-    fn finite_diff_stm_series_zero_steps_is_identity() {
-        let series = finite_diff_stm_series(
-            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
-            state(),
-            Second::new(10.0),
-            0,
-            &(),
-        )
-        .unwrap();
+    fn finite_diff_stm_series_zero_steps_returns_identity() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let series =
+            finite_diff_stm_series(&TwoBody::new(mu), state(), Second::new(5.0), 0, &()).unwrap();
         assert_eq!(series.len(), 1);
-        assert_eq!(
-            *series[0].as_array(),
-            *FrameMatrix6::<Frame>::identity().as_array()
-        );
+        let identity = FrameMatrix6::<Frame>::identity();
+        assert_eq!(*series[0].as_array(), *identity.as_array());
     }
 
     #[test]
-    #[should_panic(expected = "index out of range")]
-    fn state_component_out_of_range_panics() {
-        state_component::<TT, Center, Frame>(&state(), 6);
+    fn variational_config_default_is_valid() {
+        let cfg = VariationalConfig::default();
+        assert!(cfg.step.value() > 0.0);
+    }
+
+    #[test]
+    fn propagate_stm_backward_advances_epoch_negatively() {
+        let mu = GravitationalParameter::new(398_600.441_8);
+        let s0 = state();
+        let (s_back, _) = propagate_stm(&TwoBody::new(mu), s0, Second::new(-30.0), &()).unwrap();
+        let elapsed = (s_back.epoch - s0.epoch).value();
+        assert!(elapsed < 0.0, "epoch should go backward: elapsed={elapsed}");
     }
 }

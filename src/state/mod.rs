@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Cartesian dynamics state and time-derivative aggregate.
@@ -45,6 +45,8 @@ use qtty::unit::Kilometer;
 use qtty::{KmPerSecond, KmPerSecondSquared, Second};
 use tempoch::{ContinuousScale, Time};
 
+use crate::error::PrincipiaError;
+
 /// Default position type carried by [`DynamicsState`].
 pub type Position<C, F> = cartesian::Position<C, F, Kilometer>;
 
@@ -73,6 +75,134 @@ where
 }
 
 // Manual trait impls — `derive` cannot express the `C::Params: Copy` bound.
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "S: tempoch::Scale + tempoch::CoordinateScale, P: serde::Serialize",
+    deserialize = "S: tempoch::Scale + tempoch::CoordinateScale, P: serde::Deserialize<'de>"
+))]
+struct DynamicsStateSerde<S: tempoch::Scale + tempoch::CoordinateScale, P> {
+    epoch: Time<S>,
+    center_params: P,
+    position_km: [f64; 3],
+    velocity_km_s: [f64; 3],
+}
+
+#[cfg(feature = "serde")]
+impl<S, C, F> serde::Serialize for DynamicsState<S, C, F>
+where
+    S: ContinuousScale + tempoch::Scale + tempoch::CoordinateScale,
+    C: ReferenceCenter,
+    C::Params: Clone + serde::Serialize,
+    F: ReferenceFrame,
+    Time<S>: serde::Serialize,
+{
+    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+    where
+        Ser: serde::Serializer,
+    {
+        DynamicsStateSerde {
+            epoch: self.epoch,
+            center_params: self.position.center_params().clone(),
+            position_km: [
+                self.position.x().value(),
+                self.position.y().value(),
+                self.position.z().value(),
+            ],
+            velocity_km_s: [
+                self.velocity.x().value(),
+                self.velocity.y().value(),
+                self.velocity.z().value(),
+            ],
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, S, C, F> serde::Deserialize<'de> for DynamicsState<S, C, F>
+where
+    S: ContinuousScale + tempoch::Scale + tempoch::CoordinateScale,
+    C: ReferenceCenter,
+    C::Params: serde::Deserialize<'de>,
+    F: ReferenceFrame,
+    Time<S>: serde::Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let helper = DynamicsStateSerde::<S, C::Params>::deserialize(deserializer)?;
+        Ok(Self {
+            epoch: helper.epoch,
+            position: Position::<C, F>::new_with_params(
+                helper.center_params,
+                helper.position_km[0],
+                helper.position_km[1],
+                helper.position_km[2],
+            ),
+            velocity: Velocity::<F>::new(
+                helper.velocity_km_s[0],
+                helper.velocity_km_s[1],
+                helper.velocity_km_s[2],
+            ),
+        })
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StateDerivativeSerde {
+    vel_km_s: [f64; 3],
+    acc_km_s2: [f64; 3],
+}
+
+#[cfg(feature = "serde")]
+impl<F> serde::Serialize for StateDerivative<F>
+where
+    F: ReferenceFrame,
+{
+    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+    where
+        Ser: serde::Serializer,
+    {
+        StateDerivativeSerde {
+            vel_km_s: [
+                self.vel.x().value(),
+                self.vel.y().value(),
+                self.vel.z().value(),
+            ],
+            acc_km_s2: [
+                self.acc.x().value(),
+                self.acc.y().value(),
+                self.acc.z().value(),
+            ],
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, F> serde::Deserialize<'de> for StateDerivative<F>
+where
+    F: ReferenceFrame,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let helper = StateDerivativeSerde::deserialize(deserializer)?;
+        Ok(Self {
+            vel: Velocity::<F>::new(helper.vel_km_s[0], helper.vel_km_s[1], helper.vel_km_s[2]),
+            acc: Acceleration::<F>::new(
+                helper.acc_km_s2[0],
+                helper.acc_km_s2[1],
+                helper.acc_km_s2[2],
+            ),
+        })
+    }
+}
 
 impl<S, C, F> Clone for DynamicsState<S, C, F>
 where
@@ -132,6 +262,52 @@ where
         }
     }
 
+    /// Constructs a new [`DynamicsState`], returning [`PrincipiaError::NonFiniteValue`]
+    /// if any position or velocity component is non-finite.
+    pub fn try_new(
+        epoch: Time<S>,
+        position: Position<C, F>,
+        velocity: Velocity<F>,
+    ) -> Result<Self, PrincipiaError> {
+        let state = Self {
+            epoch,
+            position,
+            velocity,
+        };
+        if !state.is_finite() {
+            return Err(PrincipiaError::NonFiniteValue {
+                context: "DynamicsState: position or velocity component is non-finite",
+            });
+        }
+        Ok(state)
+    }
+
+    /// Returns `true` if every component of position and velocity is finite.
+    pub fn is_finite(&self) -> bool {
+        self.position.x().value().is_finite()
+            && self.position.y().value().is_finite()
+            && self.position.z().value().is_finite()
+            && self.velocity.x().value().is_finite()
+            && self.velocity.y().value().is_finite()
+            && self.velocity.z().value().is_finite()
+    }
+
+    /// Returns the Euclidean norm of the position vector in kilometres.
+    pub fn position_norm(&self) -> f64 {
+        let x = self.position.x().value();
+        let y = self.position.y().value();
+        let z = self.position.z().value();
+        (x * x + y * y + z * z).sqrt()
+    }
+
+    /// Returns the Euclidean norm of the velocity vector in km s⁻¹.
+    pub fn velocity_norm(&self) -> f64 {
+        let x = self.velocity.x().value();
+        let y = self.velocity.y().value();
+        let z = self.velocity.z().value();
+        (x * x + y * y + z * z).sqrt()
+    }
+
     /// Advance position and velocity by `dt` along `deriv`.
     ///
     /// Performs a single forward Euler step:
@@ -184,6 +360,24 @@ impl<F: ReferenceFrame> StateDerivative<F> {
     #[inline]
     pub fn new(vel: Velocity<F>, acc: Acceleration<F>) -> Self {
         Self { vel, acc }
+    }
+
+    /// Constructs a new [`StateDerivative`], returning [`PrincipiaError::NonFiniteValue`]
+    /// if any component is non-finite.
+    pub fn try_new(vel: Velocity<F>, acc: Acceleration<F>) -> Result<Self, PrincipiaError> {
+        let deriv = Self { vel, acc };
+        if !deriv.vel.x().value().is_finite()
+            || !deriv.vel.y().value().is_finite()
+            || !deriv.vel.z().value().is_finite()
+            || !deriv.acc.x().value().is_finite()
+            || !deriv.acc.y().value().is_finite()
+            || !deriv.acc.z().value().is_finite()
+        {
+            return Err(PrincipiaError::NonFiniteValue {
+                context: "StateDerivative: velocity or acceleration component is non-finite",
+            });
+        }
+        Ok(deriv)
     }
 
     /// Return the velocity component (`dr/dt`).
@@ -307,6 +501,60 @@ mod tests {
     }
 
     #[test]
+    fn try_new_rejects_non_finite_position() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let result = DynamicsState::try_new(
+            epoch,
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(f64::NAN, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(matches!(result, Err(PrincipiaError::NonFiniteValue { .. })));
+    }
+
+    #[test]
+    fn is_finite_detects_nan_component() {
+        let state = DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(f64::NAN, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(!state.is_finite());
+    }
+
+    #[test]
+    fn position_norm_matches_euclidean_length() {
+        let state = DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(3.0, 4.0, 12.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 0.0, 0.0),
+        );
+        assert!((state.position_norm() - 13.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn velocity_norm_matches_euclidean_length() {
+        let state = DynamicsState::new(
+            Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap(),
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(2.0, 3.0, 6.0),
+        );
+        assert!((state.velocity_norm() - 7.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn state_derivative_try_new_rejects_non_finite_component() {
+        let result = StateDerivative::try_new(
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+            affn::cartesian::Acceleration::<Inertial, KmPerSecondSquared>::new(
+                f64::INFINITY,
+                0.0,
+                0.0,
+            ),
+        );
+        assert!(matches!(result, Err(PrincipiaError::NonFiniteValue { .. })));
+    }
+
+    #[test]
     fn advance_with_epoch_advances_epoch() {
         let s = make_state();
         let d = make_deriv();
@@ -348,5 +596,73 @@ mod tests {
         let combined = StateDerivative::rk4_combine(&d, &d, &d, &d);
         assert!((combined.vel.x().value() - d.vel.x().value()).abs() < 1e-14);
         assert!((combined.acc.x().value() - d.acc.x().value()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn advance_does_not_update_epoch() {
+        let s = make_state();
+        let d = make_deriv();
+        let dt = Second::new(5.0);
+        let s2 = s.advance(&d, dt);
+        // advance() leaves epoch unchanged
+        assert_eq!(s2.epoch, s.epoch);
+        // but advance_with_epoch() does update it
+        let s3 = s.advance_with_epoch(&d, dt);
+        assert!((s3.epoch - s.epoch - dt).value().abs() < 1e-12);
+    }
+
+    #[test]
+    fn is_finite_true_for_valid_state() {
+        assert!(make_state().is_finite());
+    }
+
+    #[test]
+    fn try_new_accepts_finite_state() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let result = DynamicsState::try_new(
+            epoch,
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn state_derivative_try_new_accepts_finite() {
+        let result = StateDerivative::try_new(
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
+            affn::cartesian::Acceleration::<Inertial, KmPerSecondSquared>::new(-0.8, 0.0, 0.0),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn dynamics_state_serde_roundtrip() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(12345.0)).unwrap();
+        let s = DynamicsState::new(
+            epoch,
+            affn::cartesian::Position::<Center, Inertial, Kilometer>::new(7000.0, 100.0, -50.0),
+            affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.1, 7.5, 0.2),
+        );
+        let json = serde_json::to_string(&s).expect("serialize");
+        let s2: DynamicsState<TT, Center, Inertial> =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!((s.position.x().value() - s2.position.x().value()).abs() < 1e-12);
+        assert!((s.position.y().value() - s2.position.y().value()).abs() < 1e-12);
+        assert!((s.position.z().value() - s2.position.z().value()).abs() < 1e-12);
+        assert!((s.velocity.x().value() - s2.velocity.x().value()).abs() < 1e-12);
+        assert!((s.velocity.y().value() - s2.velocity.y().value()).abs() < 1e-12);
+        assert!((s.velocity.z().value() - s2.velocity.z().value()).abs() < 1e-12);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn state_derivative_serde_roundtrip() {
+        let d = make_deriv();
+        let json = serde_json::to_string(&d).expect("serialize");
+        let d2: StateDerivative<Inertial> = serde_json::from_str(&json).expect("deserialize");
+        assert!((d.vel.x().value() - d2.vel.x().value()).abs() < 1e-12);
+        assert!((d.acc.x().value() - d2.acc.x().value()).abs() < 1e-12);
     }
 }

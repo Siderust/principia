@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Acceleration models and composition.
@@ -18,7 +18,7 @@
 //!
 //! The trait is generic over the caller-owned context type `Ctx`. The
 //! mechanics kernel does not own `Ctx`; downstream adapters (e.g.
-//! `siderust::astro::perturbations::PerturbationContext`) supply ephemeris
+//! `siderust::astro::dynamics::PerturbationContext`) supply ephemeris
 //! / atmosphere / EOP slots.
 //!
 //! ## References
@@ -50,6 +50,41 @@ pub struct AccelerationPartials<F: ReferenceFrame> {
     pub d_acc_d_pos: FrameMatrix3<F>,
     /// `∂a/∂v` in frame `F` (units: `1/s`). Zero for conservative forces.
     pub d_acc_d_vel: FrameMatrix3<F>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AccelerationPartialsSerde {
+    d_acc_d_pos: [[f64; 3]; 3],
+    d_acc_d_vel: [[f64; 3]; 3],
+}
+
+#[cfg(feature = "serde")]
+impl<F: ReferenceFrame> serde::Serialize for AccelerationPartials<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        AccelerationPartialsSerde {
+            d_acc_d_pos: *self.d_acc_d_pos.as_array(),
+            d_acc_d_vel: *self.d_acc_d_vel.as_array(),
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, F: ReferenceFrame> serde::Deserialize<'de> for AccelerationPartials<F> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let helper = AccelerationPartialsSerde::deserialize(deserializer)?;
+        Ok(Self {
+            d_acc_d_pos: FrameMatrix3::from_array(helper.d_acc_d_pos),
+            d_acc_d_vel: FrameMatrix3::from_array(helper.d_acc_d_vel),
+        })
+    }
 }
 
 impl<F: ReferenceFrame> AccelerationPartials<F> {
@@ -197,7 +232,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "alloc", feature = "std")))]
 mod tests {
     use super::*;
     use affn::centers::ReferenceCenter;
