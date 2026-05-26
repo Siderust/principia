@@ -31,9 +31,9 @@ use qtty::length::Kilometers;
 use tempoch::ContinuousScale;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
-use qtty::Second;
-#[cfg(any(feature = "alloc", feature = "std"))]
 use qtty::IntegratorTolerances;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use qtty::Second;
 #[cfg(any(feature = "alloc", feature = "std"))]
 use tempoch::Time;
 
