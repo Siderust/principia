@@ -1,5 +1,10 @@
 # principia
 
+[![Crates.io](https://img.shields.io/crates/v/principia)](https://crates.io/crates/principia)
+[![docs.rs](https://img.shields.io/docsrs/principia)](https://docs.rs/principia)
+[![CI](https://github.com/Siderust/principia/actions/workflows/ci.yml/badge.svg)](https://github.com/Siderust/principia/actions/workflows/ci.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
+
 > **Pre-1.0 — API is not yet stable.** Expect breaking changes in every minor release.
 
 Typed Newtonian numerical dynamics for Rust: state propagation,
