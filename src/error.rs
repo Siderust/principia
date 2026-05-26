@@ -202,6 +202,8 @@ impl core::error::Error for PrincipiaError {}
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+
     #[cfg(any(feature = "alloc", feature = "std"))]
     #[test]
     fn display_examples() {

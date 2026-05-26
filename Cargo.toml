@@ -1,6 +1,6 @@
 [package]
 name = "principia"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["VPRamon <vallespuigramon@gmail.com>"]
 description = "Typed Newtonian numerical dynamics: state propagation, acceleration models, RK4/DOPRI5/DOP853 integrators, variational equations, STM, covariance, and gravity-field kernels."

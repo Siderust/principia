@@ -14,7 +14,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg(any(feature = "alloc", feature = "std", test))]
 extern crate alloc;
 
 pub mod covariance;

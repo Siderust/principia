@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-26
+
 ### Added
 - `PrincipiaError` variants: `InvalidParameter`, `NonFiniteValue`, `NonPositiveValue`, `InvalidTolerance`, `InvalidGravityRequest`, `InvalidPropagationConfig`
 - `DynamicsState::try_new`, `is_finite`, `position_norm`, `velocity_norm`
@@ -61,4 +63,5 @@ geopotential adapters, Earth rotation, atmospheres, ephemeris-backed
 contexts) now live in `siderust::astro::dynamics`. See the
 project README for the full old-to-new mapping.
 
+[0.2.0]: https://github.com/siderust/siderust/releases/tag/principia-v0.2.0
 [0.1.0]: https://github.com/siderust/siderust/releases/tag/principia-v0.1.0
