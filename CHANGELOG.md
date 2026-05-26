@@ -8,9 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `PrincipiaError` variants: `InvalidParameter`, `NonFiniteValue`, `NonPositiveValue`, `InvalidTolerance`, `InvalidGravityRequest`, `InvalidPropagationConfig`
+- `DynamicsState::try_new`, `is_finite`, `position_norm`, `velocity_norm`
+- `StateDerivative::try_new`
+- `TwoBody::try_new`, `try_with_min_radius`, `with_min_radius`; configurable `min_radius` field
+- `J2::try_new`, `try_with_min_radius`, `with_min_radius`; configurable `min_radius` field
+- `GravityConstants::try_new`
+- `PropagationConfig::validate()`
+- Typed `spherical_harmonic_acceleration` wrapper; raw kernel renamed to `spherical_harmonic_acceleration_raw_km`
+- `rtn_from_raw_km_km_s`, `vnc_from_raw_km_km_s`, `lvlh_from_raw_km_km_s` (renamed from `*_from_state`)
+- `StateCovariance::try_diagonal_from_sigmas`, `try_from_row_major`
+- `ProcessNoise::try_diagonal_from_sigmas`
+- `VariationalConfig::try_new`
+- `EventDirection` enum; `RadialThresholdEvent` uses `direction: EventDirection` instead of `falling: bool`
+- `serde` support for stable value types including states, models, frames, covariance, errors, and integrator configs
+- Five runnable examples: `two_body_rk4`, `dopri5_orbit`, `local_frames`, `gravity_field`, `stm_propagation`
 
-- Publish workflow (`.github/workflows/publish.yml`) triggered on `v*.*.*`
-  tags; verifies crate version matches the tag before uploading to crates.io.
+### Changed
+- All SPDX headers corrected from `AGPL-3.0-or-later` to `AGPL-3.0-only`
+- `rk4_propagate` now returns `Err(InvalidParameter)` for zero or non-finite step size
+- `spherical_harmonic_acceleration_raw_km` no longer silently truncates degree/order; the typed wrapper validates requests explicitly
+- README now documents WIP status, unit policy, crate boundary, serde coverage, and example entry points
+- CI now checks additional feature combinations and runs `cargo test --no-default-features`
+
+### Removed
+- Raw `rtn_from_state`, `vnc_from_state`, `lvlh_from_state` helpers replaced by `*_raw_km_km_s` variants
 
 ## [0.1.0] - 2026-05-22
 

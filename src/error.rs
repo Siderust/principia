@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Crate-level error family for `principia`.
@@ -32,6 +32,7 @@ use core::fmt;
 
 /// Errors produced by `principia` mechanics kernels.
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum PrincipiaError {
     /// A geometric computation degenerated (e.g. zero cross-product,
@@ -44,6 +45,46 @@ pub enum PrincipiaError {
     /// An integration step size, count, or tolerance is invalid.
     InvalidStepRequest {
         /// Short human-readable explanation of what constraint was violated.
+        reason: &'static str,
+    },
+
+    /// An integrator tolerance value is invalid (e.g., non-finite or ≤ 0).
+    InvalidTolerance {
+        /// Short human-readable explanation of what constraint was violated.
+        context: &'static str,
+    },
+
+    /// An integrator parameter (e.g., `h_min`, `h_max`) is invalid.
+    InvalidParameter {
+        /// Short human-readable explanation of what constraint was violated.
+        reason: &'static str,
+    },
+
+    /// A physical quantity has a non-positive value where a positive value
+    /// is required (e.g., gravitational parameter, equatorial radius).
+    NonPositiveValue {
+        /// Short human-readable context identifying the invalid quantity.
+        context: &'static str,
+    },
+
+    /// A state vector or computed quantity contains a non-finite value
+    /// (NaN or infinity).
+    NonFiniteValue {
+        /// Short human-readable context identifying the problematic component.
+        context: &'static str,
+    },
+
+    /// A gravity-model evaluation request is invalid (e.g., degree/order
+    /// out of bounds, or inconsistent degree/order pair).
+    InvalidGravityRequest {
+        /// Short human-readable explanation.
+        reason: &'static str,
+    },
+
+    /// A propagation configuration parameter is invalid (e.g., step-size
+    /// bounds, tolerances, or span duration are inconsistent or non-finite).
+    InvalidPropagationConfig {
+        /// Short human-readable explanation.
         reason: &'static str,
     },
 
@@ -108,6 +149,24 @@ impl fmt::Display for PrincipiaError {
             Self::InvalidStepRequest { reason } => {
                 write!(f, "invalid step request: {reason}")
             }
+            Self::InvalidTolerance { context } => {
+                write!(f, "invalid tolerance: {context}")
+            }
+            Self::InvalidParameter { reason } => {
+                write!(f, "invalid parameter: {reason}")
+            }
+            Self::NonPositiveValue { context } => {
+                write!(f, "non-positive value: {context}")
+            }
+            Self::NonFiniteValue { context } => {
+                write!(f, "non-finite value: {context}")
+            }
+            Self::InvalidGravityRequest { reason } => {
+                write!(f, "invalid gravity request: {reason}")
+            }
+            Self::InvalidPropagationConfig { reason } => {
+                write!(f, "invalid propagation config: {reason}")
+            }
             Self::StepControlFailed { reason } => {
                 write!(f, "step controller failed: {reason}")
             }
@@ -143,10 +202,10 @@ impl core::error::Error for PrincipiaError {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    #[cfg(any(feature = "alloc", feature = "std"))]
     #[test]
     fn display_examples() {
+        use super::PrincipiaError;
         assert!(PrincipiaError::DegenerateGeometry { reason: "r=0" }
             .to_string()
             .contains("r=0"));

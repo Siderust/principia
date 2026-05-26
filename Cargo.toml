@@ -30,6 +30,26 @@ serde = { version = "1.0", default-features = false, features = ["derive"], opti
 [dev-dependencies]
 approx = "0.5"
 
+[[example]]
+name = "two_body_rk4"
+required-features = ["std"]
+
+[[example]]
+name = "dopri5_orbit"
+required-features = ["std"]
+
+[[example]]
+name = "local_frames"
+required-features = ["std"]
+
+[[example]]
+name = "gravity_field"
+required-features = ["std"]
+
+[[example]]
+name = "stm_propagation"
+required-features = ["std"]
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "deny"

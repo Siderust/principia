@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Generic zonal-`J2` oblateness perturbation.
@@ -38,8 +38,11 @@ use crate::error::PrincipiaError;
 use crate::models::{AccelerationModel, AccelerationPartials};
 use crate::state::{Acceleration, DynamicsState};
 
+const DEGENERATE_RADIUS_KM: f64 = 100.0;
+
 /// Zonal-`J2` gravity acceleration model.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct J2 {
     /// Central-body gravitational parameter, km³/s².
     pub mu: GravitationalParameter,
@@ -47,13 +50,69 @@ pub struct J2 {
     pub r_ref: Kilometers,
     /// Dimensionless `J2` zonal coefficient.
     pub j2: f64,
+    min_radius: f64,
 }
 
 impl J2 {
     /// Construct a `J2` model from typed parameters.
     #[inline]
     pub const fn new(mu: GravitationalParameter, r_ref: Kilometers, j2: f64) -> Self {
-        Self { mu, r_ref, j2 }
+        Self {
+            mu,
+            r_ref,
+            j2,
+            min_radius: DEGENERATE_RADIUS_KM,
+        }
+    }
+
+    /// Fallible constructor validating the physical parameters.
+    pub fn try_new(
+        mu: GravitationalParameter,
+        r_ref: Kilometers,
+        j2: f64,
+    ) -> Result<Self, PrincipiaError> {
+        if !mu.value().is_finite() || mu.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "J2: gravitational parameter must be finite and positive",
+            });
+        }
+        if !r_ref.value().is_finite() || r_ref.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "J2: reference radius must be finite and positive",
+            });
+        }
+        if !j2.is_finite() {
+            return Err(PrincipiaError::NonFiniteValue {
+                context: "J2: j2 coefficient must be finite",
+            });
+        }
+        Ok(Self {
+            mu,
+            r_ref,
+            j2,
+            min_radius: DEGENERATE_RADIUS_KM,
+        })
+    }
+
+    /// Returns a copy with the degeneracy threshold set to `min_radius_km`.
+    pub fn try_with_min_radius(self, min_radius_km: f64) -> Result<Self, PrincipiaError> {
+        if !min_radius_km.is_finite() || min_radius_km <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "J2: min_radius_km must be finite and positive",
+            });
+        }
+        Ok(Self {
+            min_radius: min_radius_km,
+            ..self
+        })
+    }
+
+    /// Returns a copy with the degeneracy threshold set to `min_radius_km`.
+    ///
+    /// Panics if `min_radius_km ≤ 0` or non-finite.
+    pub fn with_min_radius(self, min_radius_km: f64) -> Self {
+        self.try_with_min_radius(min_radius_km)
+            .expect("min_radius_km must be positive and finite")
     }
 }
 
@@ -77,7 +136,7 @@ where
         let rz = state.position.z().value();
         let r2 = rx * rx + ry * ry + rz * rz;
         let r = r2.sqrt();
-        if r < 100.0 {
+        if r < self.min_radius {
             return Err(PrincipiaError::DegenerateGeometry {
                 reason: "radial magnitude below J2 degeneracy threshold",
             });
@@ -104,7 +163,7 @@ where
         let z = state.position.z().value();
         let r2 = x * x + y * y + z * z;
         let r = r2.sqrt();
-        if r < 100.0 {
+        if r < self.min_radius {
             return Err(PrincipiaError::DegenerateGeometry {
                 reason: "radial magnitude below J2 degeneracy threshold",
             });
@@ -184,6 +243,45 @@ mod tests {
             affn::cartesian::Position::<Center, Inertial, Kilometer>::new(0.0, 0.0, 0.0),
             affn::cartesian::Velocity::<Inertial, KmPerSecond>::new(0.0, 7.5, 0.0),
         )
+    }
+
+    #[test]
+    fn try_new_rejects_invalid_parameters() {
+        assert!(matches!(
+            J2::try_new(
+                GravitationalParameter::new(0.0),
+                Kilometers::new(6_378.137),
+                1.0
+            ),
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
+        assert!(matches!(
+            J2::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(0.0),
+                1.0
+            ),
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
+        assert!(matches!(
+            J2::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(6_378.137),
+                f64::NAN,
+            ),
+            Err(PrincipiaError::NonFiniteValue { .. })
+        ));
+    }
+
+    #[test]
+    fn try_with_min_radius_rejects_invalid_threshold() {
+        for min_radius in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            let result = model().try_with_min_radius(min_radius);
+            assert!(matches!(
+                result,
+                Err(PrincipiaError::NonPositiveValue { .. })
+            ));
+        }
     }
 
     #[test]

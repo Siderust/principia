@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Classical fixed-step Runge-Kutta 4 (RK4).
@@ -39,6 +39,7 @@ use crate::state::DynamicsState;
 
 /// Fixed-step classical RK4 integrator.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rk4;
 
 impl<Ctx, S, C, F> Stepper<Ctx, S, C, F> for Rk4
@@ -115,6 +116,16 @@ where
     C: ReferenceCenter,
     F: ReferenceFrame,
 {
+    if total_dt.value() != 0.0 && !h.value().is_finite() {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "rk4_propagate: step h must be finite when total_dt is non-zero",
+        });
+    }
+    if total_dt.value() != 0.0 && h.value() == 0.0 {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "rk4_propagate: step h must be non-zero when total_dt is non-zero",
+        });
+    }
     let total = total_dt.value();
     let sign = if total >= 0.0 { 1.0_f64 } else { -1.0_f64 };
     let h_abs = h.value().abs();
@@ -202,6 +213,21 @@ mod tests {
     }
 
     #[test]
+    fn rk4_propagate_rejects_zero_step_for_non_zero_duration() {
+        let result = rk4_propagate(
+            &model(),
+            circular_state(),
+            Second::new(0.0),
+            Second::new(60.0),
+            &(),
+        );
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::InvalidParameter { .. })
+        ));
+    }
+
+    #[test]
     fn rk4_propagate_conserves_radius() {
         let s0 = circular_state();
         let r0 = s0.position.x().value();
@@ -219,6 +245,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "alloc", feature = "std"))]
     #[test]
     fn rk4_propagate_series_length() {
         let s0 = circular_state();
@@ -226,6 +253,7 @@ mod tests {
         assert_eq!(series.len(), 6);
     }
 
+    #[cfg(any(feature = "alloc", feature = "std"))]
     #[test]
     fn rk4_propagate_series_first_is_initial() {
         let s0 = circular_state();

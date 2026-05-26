@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Adaptive propagation driver, events, and results.
@@ -47,6 +47,8 @@ use crate::state::DynamicsState;
 /// Error family produced by the propagation driver.
 #[derive(Debug)]
 pub enum PropagationError {
+    /// The supplied propagation configuration is inconsistent.
+    InvalidConfiguration(PrincipiaError),
     /// Wrap an underlying stepper failure.
     StepControl(PrincipiaError),
     /// The step controller requested a step smaller than the configured minimum.
@@ -73,6 +75,9 @@ pub enum PropagationError {
 impl fmt::Display for PropagationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidConfiguration(source) => {
+                write!(f, "invalid propagation configuration: {source}")
+            }
             Self::StepControl(source) => write!(f, "integrator step control error: {source}"),
             Self::StepBelowMinimum { h_requested, h_min } => write!(
                 f,
@@ -91,6 +96,7 @@ impl fmt::Display for PropagationError {
 impl core::error::Error for PropagationError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
+            Self::InvalidConfiguration(source) => Some(source),
             Self::StepControl(source) => Some(source),
             Self::EventEvaluation { source, .. } => Some(source),
             _ => None,
@@ -98,8 +104,21 @@ impl core::error::Error for PropagationError {
     }
 }
 
+/// Direction of a state-function crossing that constitutes an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum EventDirection {
+    /// Trigger on rising zero-crossings (state function goes from negative to positive).
+    Rising,
+    /// Trigger on falling zero-crossings (state function goes from positive to negative).
+    Falling,
+    /// Trigger on either direction of crossing.
+    Either,
+}
+
 /// Propagation configuration for the low-level driver.
 #[cfg(any(feature = "alloc", feature = "std"))]
+// serde: not derived — contains Box<dyn EventDetector<...>>.
 pub struct PropagationConfig<Ctx, S, C, F>
 where
     S: ContinuousScale,
@@ -203,6 +222,69 @@ where
     pub fn total_duration_s(&self) -> f64 {
         (self.t_end - self.t_start).value()
     }
+
+    /// Validates this configuration, returning an error if any parameter is inconsistent.
+    pub fn validate(&self) -> Result<(), PrincipiaError> {
+        if !self.total_duration_s().is_finite() {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: propagation span must be finite",
+            });
+        }
+        if !self.h0.value().is_finite() || self.h0.value() == 0.0 {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: h0 must be finite and non-zero",
+            });
+        }
+        if !self.h_min.value().is_finite() || self.h_min.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: h_min must be finite and positive",
+            });
+        }
+        if !self.h_max.value().is_finite() || self.h_max.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: h_max must be finite and positive",
+            });
+        }
+        if self.h_min.value().abs() > self.h_max.value().abs() {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: h_min must not exceed h_max",
+            });
+        }
+        if !self.tolerances.rel.value().is_finite() || self.tolerances.rel.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: relative tolerance must be finite and positive",
+            });
+        }
+        for abs_tol in self.tolerances.abs_pos {
+            if !abs_tol.value().is_finite() || abs_tol.value() <= 0.0 {
+                return Err(PrincipiaError::InvalidPropagationConfig {
+                    reason:
+                        "PropagationConfig: absolute position tolerance must be finite and positive",
+                });
+            }
+        }
+        for abs_tol in self.tolerances.abs_vel {
+            if !abs_tol.value().is_finite() || abs_tol.value() <= 0.0 {
+                return Err(PrincipiaError::InvalidPropagationConfig {
+                    reason:
+                        "PropagationConfig: absolute velocity tolerance must be finite and positive",
+                });
+            }
+        }
+        if let Some(output_every) = self.output_every {
+            if !output_every.value().is_finite() || output_every.value() <= 0.0 {
+                return Err(PrincipiaError::InvalidPropagationConfig {
+                    reason: "PropagationConfig: output_every must be finite and positive",
+                });
+            }
+        }
+        if self.max_steps == 0 {
+            return Err(PrincipiaError::InvalidPropagationConfig {
+                reason: "PropagationConfig: max_steps must be at least 1",
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Zero-crossing event detector evaluated on propagated states.
@@ -232,11 +314,12 @@ where
 
 /// Detector for a radial threshold crossing `|r| = threshold`.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RadialThresholdEvent {
     /// Trigger radius.
     pub threshold: Kilometers,
-    /// If `true`, only detect descending crossings.
-    pub falling: bool,
+    /// Accepted crossing direction.
+    pub direction: EventDirection,
     /// If `true`, stop propagation when the event fires.
     pub terminal: bool,
 }
@@ -246,7 +329,7 @@ impl RadialThresholdEvent {
     pub fn new(threshold: Kilometers) -> Self {
         Self {
             threshold,
-            falling: false,
+            direction: EventDirection::Rising,
             terminal: false,
         }
     }
@@ -258,8 +341,8 @@ impl RadialThresholdEvent {
     }
 
     /// Configure the accepted crossing direction.
-    pub fn falling(mut self, falling: bool) -> Self {
-        self.falling = falling;
+    pub fn direction(mut self, direction: EventDirection) -> Self {
+        self.direction = direction;
         self
     }
 }
@@ -286,10 +369,12 @@ where
     }
 
     fn accepts_crossing(&self, g_before: f64, g_after: f64) -> bool {
-        if self.falling {
-            g_before > 0.0 && g_after <= 0.0
-        } else {
-            g_before < 0.0 && g_after >= 0.0
+        match self.direction {
+            EventDirection::Rising => g_before < 0.0 && g_after >= 0.0,
+            EventDirection::Falling => g_before > 0.0 && g_after <= 0.0,
+            EventDirection::Either => {
+                g_before == 0.0 || g_after == 0.0 || (g_before * g_after) < 0.0
+            }
         }
     }
 }
@@ -375,6 +460,8 @@ where
     F: ReferenceFrame,
     C::Params: Clone,
 {
+    cfg.validate()
+        .map_err(PropagationError::InvalidConfiguration)?;
     let total = cfg.total_duration_s();
     let direction = if total >= 0.0 { 1.0 } else { -1.0 };
     let mut samples = Vec::new();
@@ -519,7 +606,7 @@ where
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "alloc", feature = "std")))]
 mod tests {
     use super::*;
     use crate::integrators::Dopri5;
@@ -555,6 +642,19 @@ mod tests {
             affn::cartesian::Position::<Center, Inertial, qtty::unit::Kilometer>::new(r, 0.0, 0.0),
             affn::cartesian::Velocity::<Inertial, qtty::KmPerSecond>::new(0.0, v, 0.0),
         )
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_span() {
+        let epoch = Time::<TT>::from_raw_j2000_seconds(Second::new(0.0)).unwrap();
+        let cfg = PropagationConfig::<(), TT, Center, Inertial>::new(
+            epoch,
+            epoch + Second::new(f64::NAN),
+        );
+        assert!(matches!(
+            cfg.validate(),
+            Err(PrincipiaError::InvalidPropagationConfig { .. })
+        ));
     }
 
     #[test]

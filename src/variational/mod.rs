@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Variational equations and state-transition matrices.
@@ -37,6 +37,8 @@ use crate::models::{AccelerationModel, AccelerationPartials};
 use crate::state::DynamicsState;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
+use alloc::vec;
+#[cfg(any(feature = "alloc", feature = "std"))]
 use alloc::vec::Vec;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -47,6 +49,7 @@ pub type StateTransitionMatrix<F> = FrameMatrix6<F>;
 
 /// Fixed-step configuration for the variational propagator.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VariationalConfig {
     /// Positive RK4 sub-step magnitude.
     pub step: Second,
@@ -57,6 +60,18 @@ impl Default for VariationalConfig {
         Self {
             step: Second::new(30.0),
         }
+    }
+}
+
+impl VariationalConfig {
+    /// Construct a validated variational propagator configuration.
+    pub fn try_new(step: Second) -> Result<Self, PrincipiaError> {
+        if !step.value().is_finite() || step.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "VariationalConfig: step must be finite and positive",
+            });
+        }
+        Ok(Self { step })
     }
 }
 
@@ -294,7 +309,12 @@ where
     if dt.value() == 0.0 {
         return Ok((state, FrameMatrix6::identity()));
     }
-    let step_abs = config.step.value().abs().max(1e-15);
+    if !config.step.value().is_finite() || config.step.value() <= 0.0 {
+        return Err(PrincipiaError::NonPositiveValue {
+            context: "VariationalConfig: step must be finite and positive",
+        });
+    }
+    let step_abs = config.step.value().abs();
     let n_steps = (dt.value().abs() / step_abs).ceil() as usize;
     let n_steps = n_steps.max(1);
     let h = dt.value() / n_steps as f64;
@@ -509,5 +529,22 @@ mod tests {
             *phi.as_array(),
             *FrameMatrix6::<Frame>::identity().as_array()
         );
+    }
+
+    #[test]
+    fn propagate_stm_with_rejects_non_positive_step() {
+        let result = propagate_stm_with(
+            &TwoBody::new(GravitationalParameter::new(398_600.441_8)),
+            state(),
+            Second::new(60.0),
+            &(),
+            &VariationalConfig {
+                step: Second::new(0.0),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
     }
 }

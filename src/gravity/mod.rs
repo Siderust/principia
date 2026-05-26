@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Gravity-field provider trait and spherical-harmonic acceleration kernel.
@@ -10,20 +10,30 @@
 //!
 //! ## Technical scope
 //!
-//! Downstream crates implement [`GravityFieldProvider`] to supply normalized
-//! Stokes coefficients. [`spherical_harmonic_acceleration`] is the typed
-//! public entry point; the recursive Legendre/Cunningham kernel remains
-//! private to this module.
+//! Downstream crates implement [`GravityFieldProvider`] to supply fully normalized
+//! Stokes coefficients. [`spherical_harmonic_acceleration`] is the typed public
+//! entry point; [`spherical_harmonic_acceleration_raw_km`] exposes the documented
+//! raw km / km s⁻² kernel when callers explicitly need untyped arrays.
 //!
 //! ## References
 //!
 //! * Montenbruck & Gill, *Satellite Orbits*, §3.2.
 //! * Vallado, *Fundamentals of Astrodynamics and Applications*, §8.6.
 
+#[cfg(any(feature = "alloc", feature = "std"))]
+use affn::cartesian::Position;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use affn::centers::ReferenceCenter;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use affn::frames::ReferenceFrame;
+use qtty::dynamics::GravitationalParameter;
 use qtty::length::Kilometers;
-use qtty::GravitationalParameter;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use qtty::unit::Kilometer;
 
 use crate::error::PrincipiaError;
+#[cfg(any(feature = "alloc", feature = "std"))]
+use crate::state::Acceleration;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 use alloc::vec;
@@ -33,43 +43,78 @@ const SQRT3: f64 = 1.732_050_808_568_877;
 
 /// Gravity-field constants packed into one helper value.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GravityConstants {
     /// Standard gravitational parameter `μ = G·M`, km³/s².
     pub mu: GravitationalParameter,
-    /// Reference radius used by the field expansion, km.
-    pub radius: Kilometers,
-    /// Maximum supported degree.
-    pub max_degree: u16,
+    /// Equatorial reference radius used by the field expansion, km.
+    pub equatorial_radius: Kilometers,
+    /// Maximum supported degree advertised by the loaded field constants.
+    pub max_degree: u32,
+}
+
+impl GravityConstants {
+    /// Construct a validated set of gravity constants.
+    pub fn try_new(
+        mu: GravitationalParameter,
+        equatorial_radius: Kilometers,
+        max_degree: u32,
+    ) -> Result<Self, PrincipiaError> {
+        if !mu.value().is_finite() || mu.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "GravityConstants: mu must be finite and positive",
+            });
+        }
+        if !equatorial_radius.value().is_finite() || equatorial_radius.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "GravityConstants: equatorial_radius must be finite and positive",
+            });
+        }
+        Ok(Self {
+            mu,
+            equatorial_radius,
+            max_degree,
+        })
+    }
 }
 
 /// Provider of fully normalized spherical-harmonic coefficients.
+///
+/// `principia` uses the fully normalized Stokes convention (`C̄ₙₘ`, `S̄ₙₘ`).
+/// Implementations should report the maximum degree/order they can serve via
+/// [`max_degree`](Self::max_degree) and [`max_order`](Self::max_order), and
+/// return [`PrincipiaError::GravityCoefficientUnavailable`] from the coefficient
+/// accessors when `(n, m)` lies outside the loaded dataset.
 pub trait GravityFieldProvider {
     /// Return the central-body gravitational parameter.
     fn mu(&self) -> GravitationalParameter;
 
-    /// Return the reference radius used by the field model.
+    /// Return the equatorial reference radius used by the field model.
     fn reference_radius(&self) -> Kilometers;
 
-    /// Return the maximum supported degree.
+    /// Return the maximum supported degree `n` of the loaded model.
     fn max_degree(&self) -> usize;
 
-    /// Return the maximum supported order.
+    /// Return the maximum supported order `m` of the loaded model.
+    ///
+    /// The default implementation assumes a square field and returns
+    /// [`max_degree`](Self::max_degree).
     fn max_order(&self) -> usize {
         self.max_degree()
     }
 
-    /// Return the normalized cosine coefficient `C̄ₙₘ`.
+    /// Return the fully normalized cosine coefficient `C̄ₙₘ`.
     fn c_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError>;
 
-    /// Return the normalized sine coefficient `S̄ₙₘ`.
+    /// Return the fully normalized sine coefficient `S̄ₙₘ`.
     fn s_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError>;
 
-    /// Legacy convenience pack of common constants.
+    /// Convenience pack of common constants derived from this provider.
     fn constants(&self) -> GravityConstants {
         GravityConstants {
             mu: self.mu(),
-            radius: self.reference_radius(),
-            max_degree: self.max_degree() as u16,
+            equatorial_radius: self.reference_radius(),
+            max_degree: self.max_degree() as u32,
         }
     }
 
@@ -84,36 +129,100 @@ pub trait GravityFieldProvider {
     }
 }
 
-/// Evaluate the body-fixed spherical-harmonic acceleration.
+/// Low-level kernel: accepts raw km position, returns raw km/s² acceleration.
+/// No frame enforcement.
 #[cfg(any(feature = "alloc", feature = "std"))]
-pub fn spherical_harmonic_acceleration<P: GravityFieldProvider + ?Sized>(
-    provider: &P,
+pub fn spherical_harmonic_acceleration_raw_km<P: GravityFieldProvider + ?Sized>(
     body_fixed_pos_km: [f64; 3],
-    degree: usize,
-    order: usize,
+    degree: u32,
+    order: u32,
+    constants: &GravityConstants,
+    provider: &P,
+    min_radius_km: f64,
 ) -> Result<[f64; 3], PrincipiaError> {
-    if degree > provider.max_degree() {
-        return Err(PrincipiaError::GeopotentialDegreeOutOfRange {
-            requested: degree,
-            max: provider.max_degree(),
+    if !min_radius_km.is_finite() || min_radius_km <= 0.0 {
+        return Err(PrincipiaError::NonPositiveValue {
+            context: "gravity: min_radius_km must be finite and positive",
+        });
+    }
+    let degree_usize = degree as usize;
+    let order_usize = order as usize;
+    if degree_usize > provider.max_degree() {
+        return Err(PrincipiaError::InvalidGravityRequest {
+            reason: "degree exceeds provider maximum",
+        });
+    }
+    if degree > constants.max_degree {
+        return Err(PrincipiaError::InvalidGravityRequest {
+            reason: "degree exceeds gravity constants maximum",
         });
     }
     if order > degree {
-        return Err(PrincipiaError::InvalidStepRequest {
-            reason: "spherical-harmonic order must satisfy m <= n",
+        return Err(PrincipiaError::InvalidGravityRequest {
+            reason: "requested order exceeds requested degree",
         });
     }
-    let max_m = order.min(provider.max_order()).min(degree);
-    let mu = provider.mu().value();
-    let re = provider.reference_radius().value();
+    if order_usize > provider.max_order() {
+        return Err(PrincipiaError::InvalidGravityRequest {
+            reason: "order exceeds provider maximum",
+        });
+    }
     let [x, y, z] = body_fixed_pos_km;
     let r = (x * x + y * y + z * z).sqrt();
-    if r < 100.0 {
+    if r < min_radius_km {
         return Err(PrincipiaError::DegenerateGeometry {
             reason: "radial magnitude below spherical-harmonic degeneracy threshold",
         });
     }
-    compute_inner(mu, re, degree, max_m, provider, body_fixed_pos_km)
+    compute_inner(
+        constants.mu.value(),
+        constants.equatorial_radius.value(),
+        degree_usize,
+        order_usize,
+        provider,
+        body_fixed_pos_km,
+    )
+}
+
+/// Evaluates the spherical-harmonic gravitational acceleration at `position`.
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn spherical_harmonic_acceleration<C, F, P>(
+    position: &Position<C, F, Kilometer>,
+    degree: u32,
+    order: u32,
+    constants: &GravityConstants,
+    provider: &P,
+    min_radius: Kilometers,
+) -> Result<Acceleration<F>, PrincipiaError>
+where
+    C: ReferenceCenter,
+    F: ReferenceFrame,
+    P: GravityFieldProvider,
+{
+    if degree as usize > provider.max_degree() {
+        return Err(PrincipiaError::InvalidGravityRequest {
+            reason: "requested degree exceeds provider's maximum degree",
+        });
+    }
+    if order > degree {
+        return Err(PrincipiaError::InvalidGravityRequest {
+            reason: "requested order exceeds requested degree",
+        });
+    }
+    let pos_raw = [
+        position.x().value(),
+        position.y().value(),
+        position.z().value(),
+    ];
+    let acc_raw = spherical_harmonic_acceleration_raw_km(
+        pos_raw,
+        degree,
+        order,
+        constants,
+        provider,
+        min_radius.value(),
+    )?;
+    Ok(Acceleration::new(acc_raw[0], acc_raw[1], acc_raw[2]))
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -238,20 +347,97 @@ mod tests {
             if n == 0 && m == 0 {
                 Ok(1.0)
             } else {
-                Ok(0.0)
+                Err(PrincipiaError::GravityCoefficientUnavailable {
+                    degree: n as u16,
+                    order: m as u16,
+                })
             }
         }
-        fn s_normalized(&self, _n: usize, _m: usize) -> Result<f64, PrincipiaError> {
-            Ok(0.0)
+        fn s_normalized(&self, n: usize, m: usize) -> Result<f64, PrincipiaError> {
+            if n == 0 && m == 0 {
+                Ok(0.0)
+            } else {
+                Err(PrincipiaError::GravityCoefficientUnavailable {
+                    degree: n as u16,
+                    order: m as u16,
+                })
+            }
         }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Inertial;
+    impl ReferenceFrame for Inertial {
+        fn frame_name() -> &'static str {
+            "Inertial"
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct Center;
+    impl ReferenceCenter for Center {
+        type Params = ();
+        fn center_name() -> &'static str {
+            "Center"
+        }
+    }
+
+    fn constants() -> GravityConstants {
+        GravityConstants::try_new(
+            GravitationalParameter::new(398_600.441_8),
+            Kilometers::new(6_378.137),
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn gravity_constants_try_new_rejects_bad_inputs() {
+        assert!(matches!(
+            GravityConstants::try_new(GravitationalParameter::new(0.0), Kilometers::new(1.0), 0),
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
+        assert!(matches!(
+            GravityConstants::try_new(
+                GravitationalParameter::new(398_600.441_8),
+                Kilometers::new(0.0),
+                0,
+            ),
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
     }
 
     #[test]
     fn degree_zero_matches_two_body() {
-        let acc = spherical_harmonic_acceleration(&TwoBodyOnly, [7000.0, 0.0, 0.0], 0, 0).unwrap();
+        let acc = spherical_harmonic_acceleration_raw_km(
+            [7000.0, 0.0, 0.0],
+            0,
+            0,
+            &constants(),
+            &TwoBodyOnly,
+            100.0,
+        )
+        .unwrap();
         let expected = -398_600.441_8 / (7000.0 * 7000.0);
         assert!((acc[0] - expected).abs() < 1e-12);
         assert!(acc[1].abs() < 1e-30);
         assert!(acc[2].abs() < 1e-30);
+    }
+
+    #[test]
+    fn typed_wrapper_rejects_excess_degree() {
+        let position = Position::<Center, Inertial, Kilometer>::new(7000.0, 0.0, 0.0);
+        let result = spherical_harmonic_acceleration(
+            &position,
+            1,
+            0,
+            &constants(),
+            &TwoBodyOnly,
+            Kilometers::new(100.0),
+        );
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::InvalidGravityRequest { .. })
+        ));
     }
 }

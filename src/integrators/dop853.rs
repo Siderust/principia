@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! 8th-order adaptive Runge-Kutta integrator (Hairer–Norsett–Wanner DOP853).
@@ -42,7 +42,50 @@ use crate::error::PrincipiaError;
 use crate::models::AccelerationModel;
 use crate::state::{DynamicsState, StateDerivative, Velocity};
 
+fn validate_tolerances(tol: IntegratorTolerances) -> Result<(), PrincipiaError> {
+    if !tol.rel.value().is_finite() || tol.rel.value() <= 0.0 {
+        return Err(PrincipiaError::InvalidTolerance {
+            context: "DOP853: relative tolerance must be finite and positive",
+        });
+    }
+    for abs_tol in tol.abs_pos {
+        if !abs_tol.value().is_finite() || abs_tol.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidTolerance {
+                context: "DOP853: absolute position tolerance must be finite and positive",
+            });
+        }
+    }
+    for abs_tol in tol.abs_vel {
+        if !abs_tol.value().is_finite() || abs_tol.value() <= 0.0 {
+            return Err(PrincipiaError::InvalidTolerance {
+                context: "DOP853: absolute velocity tolerance must be finite and positive",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_step_bounds(h_min: Second, h_max: Second) -> Result<(), PrincipiaError> {
+    if !h_min.value().is_finite() || h_min.value() <= 0.0 {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOP853: h_min must be finite and positive",
+        });
+    }
+    if !h_max.value().is_finite() || h_max.value() <= 0.0 {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOP853: h_max must be finite and positive",
+        });
+    }
+    if h_min.value().abs() > h_max.value().abs() {
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOP853: h_min must not exceed h_max",
+        });
+    }
+    Ok(())
+}
+
 /// Stateful DOP853 integrator (8th-order adaptive Runge-Kutta).
+#[derive(Debug, Clone, Copy)]
 pub struct Dop853 {
     /// Error control tolerances.
     pub tolerances: IntegratorTolerances,
@@ -50,6 +93,68 @@ pub struct Dop853 {
     pub h_max: Second,
     /// Minimum allowed step size.
     pub h_min: Second,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Dop853Serde {
+    rel: f64,
+    abs_pos: [f64; 3],
+    abs_vel: [f64; 3],
+    h_max_s: f64,
+    h_min_s: f64,
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Dop853 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        Dop853Serde {
+            rel: self.tolerances.rel.value(),
+            abs_pos: [
+                self.tolerances.abs_pos[0].value(),
+                self.tolerances.abs_pos[1].value(),
+                self.tolerances.abs_pos[2].value(),
+            ],
+            abs_vel: [
+                self.tolerances.abs_vel[0].value(),
+                self.tolerances.abs_vel[1].value(),
+                self.tolerances.abs_vel[2].value(),
+            ],
+            h_max_s: self.h_max.value(),
+            h_min_s: self.h_min.value(),
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Dop853 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let helper = Dop853Serde::deserialize(deserializer)?;
+        Ok(Self {
+            tolerances: IntegratorTolerances {
+                rel: qtty::tolerances::RelativeTolerance::new(helper.rel),
+                abs_pos: [
+                    qtty::tolerances::AbsoluteTolerancePosition::new_km(helper.abs_pos[0]),
+                    qtty::tolerances::AbsoluteTolerancePosition::new_km(helper.abs_pos[1]),
+                    qtty::tolerances::AbsoluteTolerancePosition::new_km(helper.abs_pos[2]),
+                ],
+                abs_vel: [
+                    qtty::tolerances::AbsoluteToleranceVelocity::new_km_s(helper.abs_vel[0]),
+                    qtty::tolerances::AbsoluteToleranceVelocity::new_km_s(helper.abs_vel[1]),
+                    qtty::tolerances::AbsoluteToleranceVelocity::new_km_s(helper.abs_vel[2]),
+                ],
+            },
+            h_max: Second::new(helper.h_max_s),
+            h_min: Second::new(helper.h_min_s),
+        })
+    }
 }
 
 impl Dop853 {
@@ -60,6 +165,18 @@ impl Dop853 {
             h_max: Second::new(86_400.0),
             h_min: Second::new(1e-6),
         }
+    }
+
+    /// Construct and validate the integrator configuration.
+    pub fn try_new(tolerances: IntegratorTolerances) -> Result<Self, PrincipiaError> {
+        let integrator = Self::new(tolerances);
+        integrator.validate()?;
+        Ok(integrator)
+    }
+
+    fn validate(&self) -> Result<(), PrincipiaError> {
+        validate_tolerances(self.tolerances)?;
+        validate_step_bounds(self.h_min, self.h_max)
     }
 
     /// Override the maximum step size.
@@ -89,6 +206,7 @@ where
         h_try: Second,
         ctx: &Ctx,
     ) -> Result<(DynamicsState<S, C, F>, Second, Second, u32), PrincipiaError> {
+        self.validate()?;
         let (s, h_used, h_next, _dense, rejected) = dop853_step(
             model,
             state,
@@ -107,6 +225,14 @@ where
 /// This provides O(h⁴) cubic-Hermite interpolation based on the step endpoints
 /// and their derivatives — not the full 8th-order DOP853 continuous-extension
 /// polynomial. Sufficient for most orbit propagation use cases.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "DynamicsState<S, C, F>: serde::Serialize, StateDerivative<F>: serde::Serialize",
+        deserialize = "DynamicsState<S, C, F>: serde::Deserialize<'de>, StateDerivative<F>: serde::Deserialize<'de>"
+    ))
+)]
 pub struct Dop853Step<S, C, F>
 where
     S: ContinuousScale,
@@ -233,7 +359,10 @@ where
     C: ReferenceCenter,
     F: ReferenceFrame,
 {
-    // Butcher tableau — Hairer dop853.f
+    validate_tolerances(tol)?;
+    validate_step_bounds(h_min, h_max)?;
+
+    // Butcher tableau — Hairer dop853.f.
     let c2 = 5.260_015_195_876_773e-2;
     let c3 = 7.890_022_793_815_16e-2;
     let c4 = 1.183_503_419_072_274e-1;
@@ -320,8 +449,8 @@ where
 
     let mut h = h_try.value();
     if !h.is_finite() || h == 0.0 {
-        return Err(PrincipiaError::StepBelowMinimum {
-            reason: "DOP853: step size must be finite and non-zero",
+        return Err(PrincipiaError::InvalidParameter {
+            reason: "DOP853: trial step must be finite and non-zero",
         });
     }
     let h_min_abs = h_min.value().abs();
@@ -494,6 +623,8 @@ where
             } else {
                 tol.abs_vel[i - 3].value()
             };
+            // `validate_tolerances` guarantees a strictly positive scaling term
+            // for every state component before the error norm is formed.
             let sc = abs_tol + tol.rel.value() * y0i.abs().max(y1i.abs());
             let ea = deriv_component(&err_d, i) / sc;
             let eb = deriv_component(&err_bhh, i) / sc;
@@ -562,6 +693,7 @@ where
     C: ReferenceCenter,
     F: ReferenceFrame,
 {
+    validate_tolerances(tol)?;
     let posneg = dt_total.signum();
     let f0 = rhs(model, state, ctx)?;
 
@@ -631,6 +763,7 @@ where
     C: ReferenceCenter,
     F: ReferenceFrame,
 {
+    validate_tolerances(tol)?;
     let total_dt_s = total_dt.value();
     if total_dt_s == 0.0 {
         return Ok(state);
@@ -699,6 +832,15 @@ mod tests {
 
     fn tol() -> IntegratorTolerances {
         IntegratorTolerances::uniform(1e-9, 1e-6, 1e-9)
+    }
+
+    #[test]
+    fn try_new_rejects_invalid_tolerances() {
+        let bad = IntegratorTolerances::uniform(1e-9, 0.0, 1e-9);
+        assert!(matches!(
+            Dop853::try_new(bad),
+            Err(PrincipiaError::InvalidTolerance { .. })
+        ));
     }
 
     #[test]

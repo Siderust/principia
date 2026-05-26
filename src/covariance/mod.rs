@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Cartesian state covariance and process noise.
@@ -27,6 +27,7 @@ use affn::ops::Rotation3;
 use qtty::length::Kilometers;
 use qtty::{KmPerSecond, KmPerSecondSquared, Quantity, RelativeTolerance, Second};
 
+use crate::error::PrincipiaError;
 use crate::frames::LocalTrajectoryFrame;
 use crate::variational::StateTransitionMatrix;
 
@@ -36,6 +37,66 @@ pub struct StateCovariance<F: ReferenceFrame> {
     rr: SymmetricFrameMatrix3<F>,
     rv: FrameMatrix3<F>,
     vv: SymmetricFrameMatrix3<F>,
+}
+
+#[cfg(feature = "serde")]
+impl<F: ReferenceFrame> serde::Serialize for StateCovariance<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_row_major().serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, F: ReferenceFrame> serde::Deserialize<'de> for StateCovariance<F> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let matrix = <[[f64; 6]; 6]>::deserialize(deserializer)?;
+        let mut flat = [0.0_f64; 36];
+        for i in 0..6 {
+            for j in 0..6 {
+                flat[i * 6 + j] = matrix[i][j];
+            }
+        }
+        Self::try_from_row_major(flat).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<F: ReferenceFrame> serde::Serialize for ProcessNoise<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.data.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, F: ReferenceFrame> serde::Deserialize<'de> for ProcessNoise<F> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let data = <[[f64; 6]; 6]>::deserialize(deserializer)?;
+        for row in &data {
+            for value in row {
+                if !value.is_finite() {
+                    return Err(serde::de::Error::custom(
+                        "ProcessNoise: matrix entries must be finite",
+                    ));
+                }
+            }
+        }
+        Ok(Self {
+            data,
+            _frame: core::marker::PhantomData,
+        })
+    }
 }
 
 impl<F: ReferenceFrame> StateCovariance<F> {
@@ -69,6 +130,29 @@ impl<F: ReferenceFrame> StateCovariance<F> {
         }
     }
 
+    /// Construct a diagonal covariance from raw one-sigma values `[σx, σy, σz, σvx, σvy, σvz]`.
+    pub fn try_diagonal_from_sigmas(sigmas: [f64; 6]) -> Result<Self, PrincipiaError> {
+        for sigma in sigmas {
+            if !sigma.is_finite() || sigma <= 0.0 {
+                return Err(PrincipiaError::NonPositiveValue {
+                    context: "StateCovariance: sigmas must be finite and positive",
+                });
+            }
+        }
+        Ok(Self::diagonal_from_sigmas(
+            [
+                Kilometers::new(sigmas[0]),
+                Kilometers::new(sigmas[1]),
+                Kilometers::new(sigmas[2]),
+            ],
+            [
+                Quantity::<KmPerSecond>::new(sigmas[3]),
+                Quantity::<KmPerSecond>::new(sigmas[4]),
+                Quantity::<KmPerSecond>::new(sigmas[5]),
+            ],
+        ))
+    }
+
     /// Construct from a raw row-major `6 × 6` matrix.
     pub fn from_row_major(m: [[f64; 6]; 6]) -> Self {
         Self {
@@ -88,6 +172,25 @@ impl<F: ReferenceFrame> StateCovariance<F> {
                 [m[5][3], m[5][4], m[5][5]],
             ]),
         }
+    }
+
+    /// Construct from a raw row-major `6 × 6` matrix flattened row-major.
+    pub fn try_from_row_major(m: [f64; 36]) -> Result<Self, PrincipiaError> {
+        let mut matrix = [[0.0; 6]; 6];
+        for i in 0..6 {
+            for j in 0..6 {
+                matrix[i][j] = m[i * 6 + j];
+            }
+        }
+        validate_covariance_matrix(&matrix)?;
+        let covariance = Self::from_row_major(matrix);
+        if !covariance.is_positive_semidefinite(RelativeTolerance::new(1e-12)) {
+            return Err(PrincipiaError::InvalidParameter {
+                reason:
+                    "StateCovariance: covariance matrix must be symmetric positive semidefinite",
+            });
+        }
+        Ok(covariance)
     }
 
     /// Construct from already-prepared block components.
@@ -317,6 +420,35 @@ impl<F: ReferenceFrame> ProcessNoise<F> {
         }
     }
 
+    /// Build a validated diagonal process-noise model from raw sigma rates.
+    pub fn try_diagonal_from_sigmas(sigmas: [f64; 6], dt: Second) -> Result<Self, PrincipiaError> {
+        for sigma in sigmas {
+            if !sigma.is_finite() || sigma <= 0.0 {
+                return Err(PrincipiaError::NonPositiveValue {
+                    context: "ProcessNoise: sigmas must be finite and positive",
+                });
+            }
+        }
+        if !dt.value().is_finite() || dt.value() <= 0.0 {
+            return Err(PrincipiaError::NonPositiveValue {
+                context: "ProcessNoise: dt must be finite and positive",
+            });
+        }
+        Ok(Self::diagonal_from_sigmas(
+            [
+                Quantity::<KmPerSecond>::new(sigmas[0]),
+                Quantity::<KmPerSecond>::new(sigmas[1]),
+                Quantity::<KmPerSecond>::new(sigmas[2]),
+            ],
+            [
+                Quantity::<KmPerSecondSquared>::new(sigmas[3]),
+                Quantity::<KmPerSecondSquared>::new(sigmas[4]),
+                Quantity::<KmPerSecondSquared>::new(sigmas[5]),
+            ],
+            dt,
+        ))
+    }
+
     /// Add this process noise into a covariance in place.
     #[allow(clippy::needless_range_loop)]
     pub fn add_to(&self, cov: &mut StateCovariance<F>) {
@@ -336,6 +468,35 @@ impl<F: ReferenceFrame> ProcessNoise<F> {
     pub fn to_row_major(&self) -> [[f64; 6]; 6] {
         self.data
     }
+}
+
+#[allow(clippy::needless_range_loop)]
+fn validate_covariance_matrix(m: &[[f64; 6]; 6]) -> Result<(), PrincipiaError> {
+    for i in 0..6 {
+        for j in 0..6 {
+            if !m[i][j].is_finite() {
+                return Err(PrincipiaError::InvalidParameter {
+                    reason: "StateCovariance: matrix entries must be finite",
+                });
+            }
+        }
+        if m[i][i] <= 0.0 {
+            return Err(PrincipiaError::InvalidParameter {
+                reason: "StateCovariance: diagonal entries must be strictly positive",
+            });
+        }
+    }
+    for i in 0..6 {
+        for j in (i + 1)..6 {
+            let scale = m[i][j].abs().max(m[j][i].abs()).max(1.0);
+            if (m[i][j] - m[j][i]).abs() > 1e-12 * scale {
+                return Err(PrincipiaError::InvalidParameter {
+                    reason: "StateCovariance: matrix must be symmetric",
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -411,6 +572,31 @@ mod tests {
             [Quantity::<KmPerSecond>::new(1e-3); 3],
         );
         assert!(p.is_positive_semidefinite(RelativeTolerance::new(1e-10)));
+    }
+
+    #[test]
+    fn try_diagonal_from_sigmas_rejects_non_positive_sigma() {
+        let result = StateCovariance::<Inertial>::try_diagonal_from_sigmas([
+            1.0, 1.0, 0.0, 1e-3, 1e-3, 1e-3,
+        ]);
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
+    }
+
+    #[test]
+    fn try_from_row_major_rejects_non_finite_entry() {
+        let mut matrix = [0.0_f64; 36];
+        for i in 0..6 {
+            matrix[i * 6 + i] = 1.0;
+        }
+        matrix[1] = f64::NAN;
+        let result = StateCovariance::<Inertial>::try_from_row_major(matrix);
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::InvalidParameter { .. })
+        ));
     }
 
     #[test]
@@ -552,6 +738,18 @@ mod tests {
                 assert_eq!(*val, 0.0);
             }
         }
+    }
+
+    #[test]
+    fn process_noise_try_diagonal_from_sigmas_rejects_non_positive_dt() {
+        let result = ProcessNoise::<Inertial>::try_diagonal_from_sigmas(
+            [1e-3, 1e-3, 1e-3, 1e-6, 1e-6, 1e-6],
+            Second::new(0.0),
+        );
+        assert!(matches!(
+            result,
+            Err(PrincipiaError::NonPositiveValue { .. })
+        ));
     }
 
     #[test]

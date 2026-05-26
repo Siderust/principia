@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vallés Puig, Ramon
 
 //! Local trajectory frames.
@@ -77,6 +77,44 @@ where
     /// Inertial-to-local direction-cosine matrix.
     pub dcm: FrameMatrix3<Inertial>,
     _marker: PhantomData<Local>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LocalTrajectoryFrameSerde {
+    dcm: [[f64; 3]; 3],
+}
+
+#[cfg(feature = "serde")]
+impl<Inertial, Local> serde::Serialize for LocalTrajectoryFrame<Inertial, Local>
+where
+    Inertial: ReferenceFrame,
+    Local: ReferenceFrame,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        LocalTrajectoryFrameSerde {
+            dcm: *self.dcm.as_array(),
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, Inertial, Local> serde::Deserialize<'de> for LocalTrajectoryFrame<Inertial, Local>
+where
+    Inertial: ReferenceFrame,
+    Local: ReferenceFrame,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let helper = LocalTrajectoryFrameSerde::deserialize(deserializer)?;
+        Ok(Self::from_dcm(FrameMatrix3::from_array(helper.dcm)))
+    }
 }
 
 impl<Inertial, Local> LocalTrajectoryFrame<Inertial, Local>
@@ -274,8 +312,8 @@ where
     }
 }
 
-/// Construct an RTN frame from raw Cartesian state components.
-pub fn rtn_from_state<Inertial: ReferenceFrame>(
+/// Construct an RTN frame from raw Cartesian state components in km and km/s.
+pub fn rtn_from_raw_km_km_s<Inertial: ReferenceFrame>(
     r: [f64; 3],
     v: [f64; 3],
 ) -> Result<LocalTrajectoryFrame<Inertial, RTN>, PrincipiaError> {
@@ -308,8 +346,8 @@ pub fn rtn_from_state<Inertial: ReferenceFrame>(
     ])))
 }
 
-/// Construct a VNC frame from raw Cartesian state components.
-pub fn vnc_from_state<Inertial: ReferenceFrame>(
+/// Construct a VNC frame from raw Cartesian state components in km and km/s.
+pub fn vnc_from_raw_km_km_s<Inertial: ReferenceFrame>(
     r: [f64; 3],
     v: [f64; 3],
 ) -> Result<LocalTrajectoryFrame<Inertial, VNC>, PrincipiaError> {
@@ -320,7 +358,7 @@ pub fn vnc_from_state<Inertial: ReferenceFrame>(
         });
     }
     let v_hat = [v[0] / v_norm, v[1] / v_norm, v[2] / v_norm];
-    let rtn = rtn_from_state::<Inertial>(r, v)?;
+    let rtn = rtn_from_raw_km_km_s::<Inertial>(r, v)?;
     let n_hat = rtn.dcm.as_array()[2];
     let c_hat = [
         v_hat[1] * n_hat[2] - v_hat[2] * n_hat[1],
@@ -332,12 +370,12 @@ pub fn vnc_from_state<Inertial: ReferenceFrame>(
     ])))
 }
 
-/// Construct an LVLH frame from raw Cartesian state components.
-pub fn lvlh_from_state<Inertial: ReferenceFrame>(
+/// Construct an LVLH frame from raw Cartesian state components in km and km/s.
+pub fn lvlh_from_raw_km_km_s<Inertial: ReferenceFrame>(
     r: [f64; 3],
     v: [f64; 3],
 ) -> Result<LocalTrajectoryFrame<Inertial, LVLH>, PrincipiaError> {
-    let rtn = rtn_from_state::<Inertial>(r, v)?;
+    let rtn = rtn_from_raw_km_km_s::<Inertial>(r, v)?;
     let r_hat = rtn.dcm.as_array()[0];
     let n_hat = rtn.dcm.as_array()[2];
     let z_hat = [-r_hat[0], -r_hat[1], -r_hat[2]];
@@ -416,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn rtn_from_state_free_function_matches_try_from_state() {
+    fn rtn_from_raw_km_km_s_matches_try_from_state() {
         let s = circular_state();
         let r = [
             s.position.x().value(),
@@ -429,7 +467,7 @@ mod tests {
             s.velocity.z().value(),
         ];
         let f1 = LocalTrajectoryFrame::<Inertial, RTN>::try_from_state(&s).unwrap();
-        let f2 = rtn_from_state::<Inertial>(r, v).unwrap();
+        let f2 = rtn_from_raw_km_km_s::<Inertial>(r, v).unwrap();
         let m1 = f1.dcm.as_array();
         let m2 = f2.dcm.as_array();
         for i in 0..3 {
@@ -440,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn vnc_from_state_free_function_succeeds() {
+    fn vnc_from_raw_km_km_s_succeeds() {
         let s = circular_state();
         let r = [
             s.position.x().value(),
@@ -452,7 +490,7 @@ mod tests {
             s.velocity.y().value(),
             s.velocity.z().value(),
         ];
-        let frame = vnc_from_state::<Inertial>(r, v).unwrap();
+        let frame = vnc_from_raw_km_km_s::<Inertial>(r, v).unwrap();
         let m = frame.dcm.as_array();
         // First row should be velocity direction (y-axis for our state)
         assert!(m[0][0].abs() < 1e-12);
@@ -460,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn lvlh_from_state_free_function_succeeds() {
+    fn lvlh_from_raw_km_km_s_succeeds() {
         let s = circular_state();
         let r = [
             s.position.x().value(),
@@ -472,28 +510,28 @@ mod tests {
             s.velocity.y().value(),
             s.velocity.z().value(),
         ];
-        let frame = lvlh_from_state::<Inertial>(r, v).unwrap();
+        let frame = lvlh_from_raw_km_km_s::<Inertial>(r, v).unwrap();
         let m = frame.dcm.as_array();
         // z row should be -radial = [-1,0,0]
         assert!((m[2][0] + 1.0).abs() < 1e-12);
     }
 
     #[test]
-    fn rtn_from_state_zero_position_error() {
-        let result = rtn_from_state::<Inertial>([0.0, 0.0, 0.0], [0.0, 7.5, 0.0]);
+    fn rtn_from_raw_km_km_s_zero_position_error() {
+        let result = rtn_from_raw_km_km_s::<Inertial>([0.0, 0.0, 0.0], [0.0, 7.5, 0.0]);
         assert!(result.is_err());
     }
 
     #[test]
-    fn rtn_from_state_parallel_pos_vel_error() {
+    fn rtn_from_raw_km_km_s_parallel_pos_vel_error() {
         // Parallel r and v => no angular momentum
-        let result = rtn_from_state::<Inertial>([7000.0, 0.0, 0.0], [7.5, 0.0, 0.0]);
+        let result = rtn_from_raw_km_km_s::<Inertial>([7000.0, 0.0, 0.0], [7.5, 0.0, 0.0]);
         assert!(result.is_err());
     }
 
     #[test]
-    fn vnc_from_state_zero_velocity_error() {
-        let result = vnc_from_state::<Inertial>([7000.0, 0.0, 0.0], [0.0, 0.0, 0.0]);
+    fn vnc_from_raw_km_km_s_zero_velocity_error() {
+        let result = vnc_from_raw_km_km_s::<Inertial>([7000.0, 0.0, 0.0], [0.0, 0.0, 0.0]);
         assert!(result.is_err());
     }
 
