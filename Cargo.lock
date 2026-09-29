@@ -4,9 +4,9 @@ version = 3
 
 [[package]]
 name = "affn"
-version = "0.8.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f3b930c8e20e9f26940bb2272eca1010e94c24866394d5433d3f543f3f512da"
+checksum = "c25a6b73983cee27bbaa7d3f08d6d2d266984effbadc7ae7089b383615845539"
 dependencies = [
  "affn-derive",
  "qtty",
@@ -15,9 +15,9 @@ dependencies = [
 
 [[package]]
 name = "affn-derive"
-version = "0.8.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82ff2c27df87b6023e6f0adc926e374165a5179471cb508e31735bdfe4fc70f0"
+checksum = "634a1cfa19b14594b9bcdd5d136d981abe2645b556322b8002c9ba5936d3c14e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -101,17 +101,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
- "wasm-bindgen",
  "windows-link",
 ]
-
-[[package]]
-name = "const-oid"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "core-foundation-sys"
@@ -144,7 +136,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer",
- "const-oid",
  "crypto-common",
 ]
 
@@ -297,7 +288,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "principia"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "affn",
  "approx",
@@ -474,9 +465,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "siderust-archive"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a69d9be4436d5caf87361c0407b25eb40d2d9f464446862109e35748ac412817"
+checksum = "5baa7a0a852b8305df7dc0b259f67041e668cb7965be2848bd4dbe9dccbefcce"
 dependencies = [
  "anyhow",
  "chrono",
@@ -507,22 +498,21 @@ dependencies = [
 
 [[package]]
 name = "tempoch"
-version = "0.6.5"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d63544602031b5ac9b90e3e3824080aea8b37fdd586b80c08fa6c8e281a75903"
+checksum = "9ab8a3c03b7f73299406d2a4f542fa267f26979cef505ab198617c93618752eb"
 dependencies = [
  "tempoch-core",
 ]
 
 [[package]]
 name = "tempoch-core"
-version = "0.6.5"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0a0d25de8d969e76c6aaeb24cdcb3ef0502aea7647d6baff78f951f2b0db90"
+checksum = "a66104342366d6cc334419731c65897c9bfb2a0fcd8e31bda648f9467436125a"
 dependencies = [
  "affn",
  "chrono",
- "qtty",
  "serde",
  "siderust-archive",
 ]

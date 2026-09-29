@@ -34,6 +34,7 @@
 //! * Hairer, Norsett & Wanner, *Solving ODEs I*, 2nd ed., Springer (1993), §II.4.
 //! * Montenbruck & Gill, *Satellite Orbits* (2001), §4.4.
 
+use qtty::{Real, Transcendental};
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use qtty::{IntegratorTolerances, Second};

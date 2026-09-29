@@ -18,6 +18,7 @@
 //!
 //! * Hairer, Nørsett, Wanner, *Solving Ordinary Differential Equations I*, §II.5.
 
+use qtty::Real;
 use core::fmt;
 
 #[cfg(any(feature = "alloc", feature = "std"))]

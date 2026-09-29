@@ -1,31 +1,31 @@
 [package]
 name = "principia"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 authors = ["VPRamon <vallespuigramon@gmail.com>"]
 description = "Typed Newtonian numerical dynamics: state propagation, acceleration models, RK4/DOPRI5/DOP853 integrators, variational equations, STM, covariance, and gravity-field kernels."
 license = "AGPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/Siderust/principia"
-keywords = ["astrodynamics", "propagation", "integrator", "gravity", "science"]
-categories = ["science", "mathematics", "aerospace"]
+keywords = ["astrodynamics", "propagation", "integrator", "gravity", "no-std"]
+categories = ["science", "mathematics", "aerospace", "no-std"]
 rust-version = "1.82"
 
 [features]
 default = ["std"]
-std = ["qtty/std"]
-alloc = ["qtty/alloc"]
-serde = ["dep:serde", "qtty/serde", "affn/serde", "tempoch/serde"]
+std = ["alloc", "qtty/std", "affn/std", "tempoch/std"]
+alloc = ["qtty/alloc", "affn/alloc", "tempoch/alloc"]
+serde = ["dep:serde", "alloc", "qtty/serde", "affn/serde", "tempoch/serde"]
 # Optional convenience aliases for astronomical frame markers from `affn`.
 # Does NOT pull in Earth/Sun/Moon constants, ephemerides, or atmosphere policy.
 astro = ["affn/astro"]
 
 [dependencies]
 qtty = { version = "0.8", default-features = false, features = ["satellite"] }
-affn = { version = "0.8", default-features = false }
-tempoch = { version = "0.6", default-features = false }
+affn = { version = "0.10", default-features = false }
+tempoch = { version = "0.7", default-features = false }
 thiserror = { version = "2", default-features = false }
-serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
 approx = "0.5"
