@@ -34,7 +34,6 @@
 //! * Vallado, *Fundamentals of Astrodynamics and Applications*, §1.
 //! * Montenbruck & Gill, *Satellite Orbits*, §3.1.
 
-use qtty::Real;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use affn::matrix3::FrameMatrix3;

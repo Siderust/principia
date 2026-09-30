@@ -25,7 +25,6 @@
 //! * Montenbruck & Gill, *Satellite Orbits*, §7.1.
 //! * Tapley, Schutz, Born, *Statistical Orbit Determination*, §4.
 
-use qtty::Real;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use affn::matrix6::FrameMatrix6;

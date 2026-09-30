@@ -31,7 +31,6 @@
 
 #![allow(clippy::excessive_precision)]
 
-use qtty::{Real, Transcendental};
 use affn::cartesian;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;

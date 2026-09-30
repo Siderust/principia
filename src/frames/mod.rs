@@ -23,7 +23,6 @@
 //!
 //! * Vallado, *Fundamentals of Astrodynamics and Applications*, §3.3.
 
-use qtty::Real;
 use core::marker::PhantomData;
 
 use affn::cartesian::{Direction, Displacement};

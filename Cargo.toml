@@ -23,7 +23,7 @@ astro = ["affn/astro"]
 [dependencies]
 qtty = { version = "0.8", default-features = false, features = ["satellite"] }
 affn = { version = "0.10", default-features = false }
-tempoch = { version = "0.7", default-features = false }
+tempoch = { version = "0.7", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 

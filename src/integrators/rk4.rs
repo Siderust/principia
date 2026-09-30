@@ -26,7 +26,6 @@
 //!
 //! * Hairer, Nørsett, Wanner, *Solving Ordinary Differential Equations I*, §II.1.
 
-use qtty::Real;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use qtty::Second;

@@ -25,7 +25,6 @@
 //!
 //! * Montenbruck & Gill, *Satellite Orbits*, §3.
 
-use qtty::Real;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use affn::matrix3::FrameMatrix3;

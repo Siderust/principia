@@ -20,8 +20,6 @@
 //! * Montenbruck & Gill, *Satellite Orbits*, §3.2.
 //! * Vallado, *Fundamentals of Astrodynamics and Applications*, §8.6.
 
-#[cfg(any(feature = "alloc", feature = "std"))]
-use qtty::Real;
 use affn::cartesian::Position;
 #[cfg(any(feature = "alloc", feature = "std"))]
 use affn::centers::ReferenceCenter;
