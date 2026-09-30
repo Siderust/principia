@@ -31,7 +31,8 @@ use affn::frames::ReferenceFrame;
 use affn::matrix3::FrameMatrix3;
 use affn::ops::Rotation3;
 use qtty::unit::Kilometer;
-use qtty::Real as _;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 use qtty::{KmPerSecond, Quantity};
 use tempoch::ContinuousScale;
 

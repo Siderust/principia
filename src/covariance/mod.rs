@@ -25,7 +25,8 @@ use affn::matrix3::{FrameMatrix3, SymmetricFrameMatrix3};
 use affn::matrix6::FrameMatrix6;
 use affn::ops::Rotation3;
 use qtty::length::Kilometers;
-use qtty::Real as _;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 use qtty::{KmPerSecond, KmPerSecondSquared, Quantity, RelativeTolerance, Second};
 
 use crate::error::PrincipiaError;
