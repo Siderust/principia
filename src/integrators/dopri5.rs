@@ -36,6 +36,8 @@
 
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 use qtty::{IntegratorTolerances, Second};
 use tempoch::ContinuousScale;
 

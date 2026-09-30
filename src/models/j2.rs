@@ -32,6 +32,8 @@ use affn::frames::ReferenceFrame;
 use affn::matrix3::FrameMatrix3;
 use qtty::dynamics::GravitationalParameter;
 use qtty::length::Kilometers;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 use tempoch::ContinuousScale;
 
 use crate::error::PrincipiaError;

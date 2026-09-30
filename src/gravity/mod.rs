@@ -30,6 +30,8 @@ use qtty::dynamics::GravitationalParameter;
 use qtty::length::Kilometers;
 #[cfg(any(feature = "alloc", feature = "std"))]
 use qtty::unit::Kilometer;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 
 use crate::error::PrincipiaError;
 #[cfg(any(feature = "alloc", feature = "std"))]

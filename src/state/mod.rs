@@ -42,6 +42,8 @@ use affn::cartesian;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use qtty::unit::Kilometer;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 use qtty::{KmPerSecond, KmPerSecondSquared, Second};
 use tempoch::{ContinuousScale, Time};
 

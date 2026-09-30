@@ -28,6 +28,8 @@
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use affn::matrix6::FrameMatrix6;
+#[cfg(not(feature = "std"))]
+use qtty::Real;
 use qtty::Second;
 use tempoch::ContinuousScale;
 
