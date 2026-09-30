@@ -5,6 +5,22 @@ All notable changes to `principia` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-09-30
+
+### Added
+
+- First-class `no_std` support with an `alloc` feature for heap-backed functionality.
+- CI coverage for `no_std + alloc` builds, including the `thumbv7em-none-eabihf` bare-metal target.
+
+### Changed
+
+- Updated `affn` from v0.8 to v0.10.
+- Updated `tempoch` from v0.6 to v0.7.
+- Propagated `std`, `alloc`, `serde`, and `astro` feature configuration through dependencies.
+- Enabled Serde's `alloc` support for non-`std` configurations.
+- Updated package metadata to advertise `no_std` support.
+- Refreshed dependency lockfile.
+
 ## [0.2.1] - 2026-06-01
 
 ### Changed
@@ -67,5 +83,6 @@ geopotential adapters, Earth rotation, atmospheres, ephemeris-backed
 contexts) now live in `siderust::astro::dynamics`. See the
 project README for the full old-to-new mapping.
 
+[0.3.0]: https://github.com/Siderust/principia/releases/tag/v0.3.0
 [0.2.0]: https://github.com/siderust/siderust/releases/tag/principia-v0.2.0
 [0.1.0]: https://github.com/siderust/siderust/releases/tag/principia-v0.1.0
