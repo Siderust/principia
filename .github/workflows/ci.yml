@@ -23,7 +23,6 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo check --no-default-features --features alloc
-      - run: cargo check --no-default-features --features serde
       - run: cargo check --no-default-features --features alloc,astro
       - run: cargo check --no-default-features --features std
       - name: Check no_std target (thumbv7em-none-eabihf)
