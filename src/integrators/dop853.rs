@@ -35,6 +35,7 @@ use affn::cartesian;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use qtty::{IntegratorTolerances, Second};
+use qtty::{Real as _, Transcendental as _};
 use tempoch::{ContinuousScale, Time};
 
 use super::{deriv_component, rhs, state_at, state_component, AdaptiveStepper};

@@ -38,6 +38,7 @@ use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use affn::matrix3::FrameMatrix3;
 use qtty::dynamics::GravitationalParameter;
+use qtty::Real as _;
 use tempoch::ContinuousScale;
 
 use crate::error::PrincipiaError;

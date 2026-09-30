@@ -20,6 +20,7 @@
 //! * Montenbruck & Gill, *Satellite Orbits*, §3.2.
 //! * Vallado, *Fundamentals of Astrodynamics and Applications*, §8.6.
 
+#[cfg(any(feature = "alloc", feature = "std"))]
 use affn::cartesian::Position;
 #[cfg(any(feature = "alloc", feature = "std"))]
 use affn::centers::ReferenceCenter;
@@ -29,6 +30,7 @@ use qtty::dynamics::GravitationalParameter;
 use qtty::length::Kilometers;
 #[cfg(any(feature = "alloc", feature = "std"))]
 use qtty::unit::Kilometer;
+use qtty::Real as _;
 
 use crate::error::PrincipiaError;
 #[cfg(any(feature = "alloc", feature = "std"))]

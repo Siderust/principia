@@ -28,6 +28,7 @@ use alloc::vec::Vec;
 use affn::centers::ReferenceCenter;
 use affn::frames::ReferenceFrame;
 use qtty::length::Kilometers;
+use qtty::Real as _;
 use tempoch::ContinuousScale;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
