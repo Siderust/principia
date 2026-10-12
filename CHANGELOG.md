@@ -5,6 +5,13 @@ All notable changes to `principia` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-12
+
+### Changed
+
+- **Breaking:** upgrade public time types to `tempoch` 0.10.0.
+- Remove temporary Git overrides and use the published Tempoch crates.
+
 ## [0.5.0] - 2026-10-11
 
 ### Changed

@@ -1,6 +1,6 @@
 [package]
 name = "principia"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 authors = ["VPRamon <vallespuigramon@gmail.com>"]
 description = "Typed Newtonian numerical dynamics: state propagation, acceleration models, RK4/DOPRI5/DOP853 integrators, variational equations, STM, covariance, and gravity-field kernels."
@@ -23,7 +23,7 @@ astro = ["affn/astro"]
 [dependencies]
 qtty = { version = "0.8", default-features = false, features = ["satellite"] }
 affn = { version = "0.11", default-features = false }
-tempoch = { version = "0.9", default-features = false, features = ["alloc"] }
+tempoch = { version = "0.10", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 
@@ -65,8 +65,3 @@ print_stdout = "warn"
 
 [lints.rustdoc]
 broken_intra_doc_links = "deny"
-
-# Temporary release bridge: remove after tempoch 0.9.0 is published.
-[patch.crates-io]
-tempoch = { git = "https://github.com/Siderust/tempoch.git", rev = "8738e233b489b7a4e6b6ec1ada10138bed5908bf" }
-tempoch-core = { git = "https://github.com/Siderust/tempoch.git", rev = "8738e233b489b7a4e6b6ec1ada10138bed5908bf" }
