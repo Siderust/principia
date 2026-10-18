@@ -4,9 +4,9 @@ version = 3
 
 [[package]]
 name = "affn"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c92c8eb95d800244fc4d8d01951bb0984f482189b65cfaa28219553ba6487304"
+checksum = "2a0b360b4990eaa67ad4413f407cfcd0d7f37f246456118d16ff9bdada7026f3"
 dependencies = [
  "affn-derive",
  "qtty",
@@ -15,9 +15,9 @@ dependencies = [
 
 [[package]]
 name = "affn-derive"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22c0ace8749730770c7df1e9eb5aaf4bd59aeebcd00e8f1d0f3787eaec7a9f8a"
+checksum = "167a4b6fa3749c5a3b77c33061dc4ad2fcd84e38954c1db519a6be2c46381929"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -288,7 +288,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "principia"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "affn",
  "approx",
@@ -509,18 +509,16 @@ dependencies = [
 
 [[package]]
 name = "tempoch"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c5ee225276e09e209e8e2f0dbb454f4e515cbc7b424af5760b3288db94ed1a5"
+version = "0.11.0"
+source = "git+https://github.com/Siderust/tempoch?rev=f42aacf51f4a3b4fd87236fa78499e19759f3ba1#f42aacf51f4a3b4fd87236fa78499e19759f3ba1"
 dependencies = [
  "tempoch-core",
 ]
 
 [[package]]
 name = "tempoch-core"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8feac6430d091604aee6cc36f539b4698c720273ce3dd2afdbfdb02410256369"
+version = "0.11.0"
+source = "git+https://github.com/Siderust/tempoch?rev=f42aacf51f4a3b4fd87236fa78499e19759f3ba1#f42aacf51f4a3b4fd87236fa78499e19759f3ba1"
 dependencies = [
  "affn",
  "chrono",
