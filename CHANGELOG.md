@@ -5,6 +5,16 @@ All notable changes to `principia` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - Unreleased
+
+### Changed
+
+- **Breaking:** upgrade `affn` to `0.12`, preserving existing features. Public
+  geometry types now share affn 0.12; downstream callers must use a compatible
+  version. No compatibility wrappers or geometry algorithms are added.
+- Upgrade `tempoch` to `0.11` to keep a single affn version in the dependency graph.
+- Temporarily pin the Tempoch migration revision until its 0.11.0 release.
+
 ## [0.6.0] - 2026-10-12
 
 ### Changed
