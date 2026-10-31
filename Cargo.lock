@@ -288,7 +288,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "principia"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "affn",
  "approx",
@@ -509,18 +509,18 @@ dependencies = [
 
 [[package]]
 name = "tempoch"
-version = "0.11.0"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9371b02bb9a518a19350f6d3c8bb60a49393bcfcc3feaae73623c89770c78e83"
+checksum = "33a4e75a1834cd78cbb695001a49fdc59c12aaf4a7b320e0474d5f8a58e96b61"
 dependencies = [
  "tempoch-core",
 ]
 
 [[package]]
 name = "tempoch-core"
-version = "0.11.0"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b107754254d4650aa5c0bb7ada266951451539bc010b6cd1d8620219dfe889"
+checksum = "00f3be5d4da18d664c6eb588762b1d3f323fec6ace0aac10b3d4c99a4ecd1142"
 dependencies = [
  "affn",
  "chrono",
