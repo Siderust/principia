@@ -5,6 +5,19 @@ All notable changes to `principia` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-10-31
+
+### Fixed
+
+- Upgrade `tempoch` to 0.11.2 to reject fractional MJD queries strictly
+  outside the final IERS EOP sample and non-finite epochs; valid EOP
+  interpolation and leap-second-aware UT1 remain unchanged upstream.
+
+### Changed
+
+- Prepare the 0.7.1 patch release, keeping Principia's public APIs,
+  numerical dynamics algorithms and supported Cargo features unchanged.
+
 ## [0.7.0] - Unreleased
 
 ### Changed
